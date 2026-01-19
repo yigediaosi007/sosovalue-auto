@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SOSOValue 自动化任务插件 - 随机版
 // @namespace    https://github.com/yigediaosi007
-// @version      2.1
-// @description  5任务随机顺序：点赞×3、观看、分享。任务和验证按钮随机点击顺序，一次性点全部，只等一个弹窗，验证失败点页面任意位置关闭。优化导航：优先 id="go_exp" 返回 EXP 页，文本匹配个人中心。
+// @version      2.3
+// @description  5任务随机顺序：点赞×3、观看、分享。任务和验证按钮随机点击顺序，一次性点全部，只等一个弹窗，验证失败→关闭弹窗→刷新页面→若连续失败2次以上则暂停60秒再试。防429间隔拉长。
 // @author       yigediaosi007 (modified by Grok)
 // @match        https://sosovalue.com/zh/exp
 // @match        https://sosovalue.com/zh/center
@@ -16,11 +16,12 @@
 
     const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-    // 当前任务（5个，根据最新确认）
+    // 当前任务
     const taskTypes = ["点赞", "点赞", "点赞", "观看", "分享"];
     let completedCount = 0;
+    let failCount = 0;                  // 连续验证失败次数计数
 
-    // Fisher-Yates 随机打乱
+    // Fisher-Yates shuffle
     function shuffle(array) {
         const newArray = [...array];
         for (let i = newArray.length - 1; i > 0; i--) {
@@ -80,7 +81,7 @@
             if (enabled) {
                 btn.click();
                 console.log(`已点击任务 ${i+1}: ${text}`);
-                await sleep(400 + Math.random() * 600);
+                await sleep(1500 + Math.random() * 2000);  // 1.5~3.5秒 防限流
             }
         }
         console.log("全部任务按钮随机点击完成！");
@@ -116,13 +117,14 @@
         return false;
     };
 
+    // 成功弹窗关闭
     const closeCongratsModal = async () => {
-        for (let i = 0; i < 5; i++) {
+        for (let i = 0; i < 6; i++) {
             const btn = Array.from(document.querySelectorAll("button")).find(b => b.textContent.includes("我已了解"));
             if (btn) {
                 btn.click();
                 console.log("关闭“恭喜”弹窗");
-                await sleep(1800);
+                await sleep(2000);
                 return true;
             }
             await sleep(400);
@@ -130,49 +132,102 @@
         return false;
     };
 
+    // 精确关闭验证失败弹窗（点击 × 按钮）
+    const closeFailedModal = async () => {
+        for (let i = 0; i < 8; i++) {
+            let closeBtn = document.querySelector(
+                'div.flex.justify-center.items-center.rounded-full.w-10.h-10.bg-neutral-bg-1-rest'
+            );
+
+            if (!closeBtn) {
+                closeBtn = Array.from(document.querySelectorAll('div.rounded-full.w-10.h-10')).find(el =>
+                    el.querySelector('svg path[stroke*="neutral-fg-1-rest"]') ||
+                    el.innerHTML.includes('M1.83325 1.8335L11.1666 11.1668')
+                );
+            }
+
+            if (closeBtn) {
+                console.log("找到验证失败弹窗的 × 关闭按钮，正在点击关闭");
+                closeBtn.click();
+                await sleep(2000);
+                return true;
+            }
+
+            await sleep(500);
+        }
+        console.warn("未找到 × 关闭按钮，尝试兜底点击 body");
+        document.body.click();
+        await sleep(2000);
+        return false;
+    };
+
+    // 检测并处理验证失败弹窗（只关闭，不刷新）
     const handleFailedVerification = async () => {
-        for (let i = 0; i < 5; i++) {
-            const h1 = Array.from(document.querySelectorAll("h1")).find(el => el.textContent.includes("验证失败"));
-            if (h1) {
-                console.log("检测到“验证失败”，点击页面关闭");
-                document.body.click();
-                await sleep(1800);
+        for (let i = 0; i < 10; i++) {
+            const title = Array.from(document.querySelectorAll("h1, h2, .text-xl, .font-bold")).find(el =>
+                el.textContent.includes("验证失败") || el.textContent.includes("失败")
+            );
+
+            if (title) {
+                console.log("检测到“验证失败”标题");
+                await closeFailedModal();
                 return true;
             }
-            await sleep(400);
+
+            await sleep(500);
         }
         return false;
     };
 
+    // 核心验证逻辑：批量点击 → 统一检查弹窗 → 处理失败
     const processVerifyButtons = async () => {
         let verifyBtns = await findVerifyButtons();
         if (verifyBtns.length === 0) return false;
 
-        console.log(`随机点击 ${verifyBtns.length} 个验证按钮...`);
-        const shuffledVerifyBtns = shuffle(verifyBtns);
+        console.log(`准备批量点击 ${verifyBtns.length} 个验证按钮...`);
 
-        for (let i = 0; i < shuffledVerifyBtns.length; i++) {
-            const btn = shuffledVerifyBtns[i];
-            const enabled = await waitForButtonEnabled(btn, i);
-            if (enabled) {
+        // 随机顺序 + 长间隔防限流
+        const shuffled = shuffle(verifyBtns);
+        for (let i = 0; i < shuffled.length; i++) {
+            const btn = shuffled[i];
+            if (await waitForButtonEnabled(btn, i)) {
                 btn.click();
-                await sleep(400 + Math.random() * 500);
+                console.log(`点击验证 ${i+1}/${shuffled.length}`);
+                await sleep(2500 + Math.random() * 3500);   // 2.5~6秒
             }
         }
 
-        console.log("等待弹窗出现（约2秒）...");
-        await sleep(2200);
+        // 等待弹窗
+        console.log("等待弹窗出现（约4-10秒）...");
+        await sleep(4000 + Math.random() * 6000);
 
+        // 检查成功弹窗
         const success = await closeCongratsModal();
         if (success) {
-            completedCount += shuffledVerifyBtns.length;
-            console.log(`验证成功，本轮完成 ${shuffledVerifyBtns.length} 个，累计 ${completedCount}`);
+            completedCount += verifyBtns.length;
+            console.log(`本轮验证成功，累计完成 ${completedCount} 个`);
+            failCount = 0;
             return true;
         }
 
-        const failed = await handleFailedVerification();
-        if (failed) console.log("验证失败，已关闭弹窗");
-        else console.log("未检测到明显弹窗");
+        // 检查失败弹窗
+        const isFailed = await handleFailedVerification();
+
+        if (isFailed) {
+            failCount++;
+            console.log(`验证失败，第 ${failCount} 次`);
+
+            if (failCount >= 2) {
+                console.log("连续失败2次以上，暂停60秒等待服务器冷却...");
+                await sleep(60000);  // 60秒冷却，可自行调整为45000/90000等
+                failCount = 1;       // 冷却后降为1，避免无限等待
+            }
+
+            // 刷新页面状态
+            console.log("关闭失败弹窗后，重新导航刷新...");
+            await navigateToRefresh();
+            await sleep(3000);
+        }
 
         return false;
     };
@@ -199,10 +254,10 @@
 
     const clickPersonalCenter = async () => {
         const items = Array.from(document.querySelectorAll("[role='menuitem'], div.cursor-pointer.p-4.hover\\:bg-gray-100, .menu-item, li.cursor-pointer"));
-        const personalCenter = items.find(el => 
-            el.textContent.trim().includes("个人中心") || 
-            el.textContent.trim().includes("个人资料") || 
-            el.textContent.trim().includes("Profile") || 
+        const personalCenter = items.find(el =>
+            el.textContent.trim().includes("个人中心") ||
+            el.textContent.trim().includes("个人资料") ||
+            el.textContent.trim().includes("Profile") ||
             el.textContent.trim().includes("Center")
         );
         if (personalCenter) {
@@ -210,18 +265,14 @@
             personalCenter.click();
         } else {
             console.warn("未找到‘个人中心’文本，尝试默认第2个菜单项");
-            if (items.length >= 2) {
-                items[1].click();
-            }
+            if (items.length >= 2) items[1].click();
         }
         await sleep(1200);
     };
 
     const clickExpToReturn = async () => {
-        // 优先使用 id="go_exp"（你提供的 HTML 最可靠）
         let el = document.getElementById("go_exp");
 
-        // fallback 到包含 Exp 文本的 div/span
         if (!el) {
             const candidates = document.querySelectorAll('div, span');
             for (const candidate of candidates) {
@@ -232,7 +283,6 @@
             }
         }
 
-        // 再 fallback 到 class 匹配（渐变文本）
         if (!el) {
             el = await waitForElement(
                 'div#go_exp, div.flex.items-center.cursor-pointer, span.text-base.mr-2.font-bold.text-transparent.whitespace-nowrap.bg-clip-text, [class*="bg-clip-text"]',
@@ -242,11 +292,11 @@
         }
 
         if (el) {
-            console.log("找到 EXP 入口 (id=go_exp 或 Exp 文本)，正在点击返回");
+            console.log("找到 EXP 入口，正在点击返回");
             el.click();
             await sleep(1500);
         } else {
-            console.error("未找到 EXP 跳转元素 (id=go_exp 或含 Exp 文本)，请检查页面");
+            console.error("未找到 EXP 跳转元素");
         }
     };
 
@@ -269,21 +319,22 @@
             await processVerifyButtons();
             verifyCount += verifyBtns.length;
 
-            if (verifyCount % 5 === 0 && verifyCount > 0) {
-                console.log("每5次验证后刷新页面...");
+            // 每3次验证刷新一次，防卡
+            if (verifyCount % 3 === 0 && verifyCount > 0) {
+                console.log("每3次验证后刷新页面...");
                 await navigateToRefresh();
             }
-            await sleep(800);
+            await sleep(1000);
         }
     };
 
     const main = async () => {
-        console.log("SOSOValue 5任务随机自动化 v2.1 开始...");
+        console.log("SOSOValue 5任务随机自动化 v2.3 开始...");
         await sleep(1500);
         await clickAllTaskButtonsAtOnce();
         console.log("所有任务按钮已随机点击，等待页面更新...");
         await sleep(3500);
-        await navigateToRefresh(); // 初次刷新
+        await navigateToRefresh();
         await checkAndProcessVerifyButtons();
         console.log("所有 5 个任务已完成！🎉");
     };
