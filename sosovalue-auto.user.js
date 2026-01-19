@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SOSOValue 自动化任务插件 - 随机版
 // @namespace    https://github.com/yigediaosi007
-// @version      2.5
-// @description  5任务随机顺序：点赞×3、观看、分享。第一次验证失败→关闭弹窗→点击头像；第二次及以后失败→关闭弹窗→等待45秒再试（不刷新导航）。防429间隔拉长。
+// @version      2.6
+// @description  5任务随机顺序：点赞×3、观看、分享。第一次验证失败→关闭弹窗→完整导航（头像→个人中心→EXP）；第二次及以后失败→关闭弹窗→等待45秒再试（不导航）。防429间隔拉长。
 // @author       yigediaosi007 (modified by Grok)
 // @match        https://sosovalue.com/zh/exp
 // @match        https://sosovalue.com/zh/center
@@ -18,7 +18,7 @@
 
     const taskTypes = ["点赞", "点赞", "点赞", "观看", "分享"];
     let completedCount = 0;
-    let failCount = 0;  // 连续验证失败次数
+    let failCount = 0;
 
     function shuffle(array) {
         const newArray = [...array];
@@ -208,15 +208,15 @@
             console.log(`验证失败，第 ${failCount} 次`);
 
             if (failCount === 1) {
-                // 第一次失败：关闭弹窗后点击头像（重新进入状态）
-                console.log("第一次失败 → 关闭弹窗后点击头像重新进入...");
-                await clickAvatarBox();  // 只点击头像，不完整导航
-                await sleep(3000);       // 等待页面响应
+                // 第一次失败：完整导航（头像 → 个人中心 → EXP）
+                console.log("第一次失败 → 关闭弹窗后完整导航刷新状态...");
+                await navigateToRefresh();
+                await sleep(3000);  // 等待页面稳定
             } else if (failCount >= 2) {
-                // 第二次及以后：关闭弹窗 → 等待45秒 → 继续检测
+                // 第二次及以后：等待45秒，不导航
                 console.log("连续失败2次以上 → 暂停45秒等待前端/服务器恢复...");
-                await sleep(45000);  // 45秒
-                failCount = 1;       // 降为1，避免无限暂停
+                await sleep(45000);
+                failCount = 1;  // 降为1，避免无限暂停
             }
 
             console.log("失败弹窗已关闭，继续检测验证按钮是否可点击...");
@@ -225,19 +225,6 @@
         return false;
     };
 
-    // 只点击头像（第一次失败时用）
-    const clickAvatarBox = async () => {
-        const selector = "div.MuiAvatar-root, .avatar, img.avatar, img.rounded-full, [aria-label*='avatar' i], [data-testid*='avatar'], div[role='button'] img, .profile-avatar";
-        try {
-            const el = await waitForElement(selector, 12000);
-            console.log("找到头像元素，正在点击（第一次失败刷新状态）");
-            el.click();
-        } catch (e) {
-            console.error("未找到头像元素:", e);
-        }
-    };
-
-    // 完整导航函数（只在初始时用）
     const navigateToRefresh = async () => {
         await clickAvatarBox();
         await sleep(900);
@@ -245,6 +232,17 @@
         await sleep(1800);
         await clickExpToReturn();
         await sleep(2200);
+    };
+
+    const clickAvatarBox = async () => {
+        const selector = "div.MuiAvatar-root, .avatar, img.avatar, img.rounded-full, [aria-label*='avatar' i], [data-testid*='avatar'], div[role='button'] img, .profile-avatar";
+        try {
+            const el = await waitForElement(selector, 12000);
+            console.log("找到头像元素，正在点击");
+            el.click();
+        } catch (e) {
+            console.error("未找到头像元素:", e);
+        }
     };
 
     const clickPersonalCenter = async () => {
@@ -323,7 +321,7 @@
     };
 
     const main = async () => {
-        console.log("SOSOValue 5任务随机自动化 v2.5 开始...");
+        console.log("SOSOValue 5任务随机自动化 v2.6 开始...");
         await sleep(1500);
         await clickAllTaskButtonsAtOnce();
         console.log("所有任务按钮已随机点击，等待页面更新...");
