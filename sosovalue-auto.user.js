@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SOSOValue 自动化任务插件 - 随机版
 // @namespace    https://github.com/yigediaosi007
-// @version      2.3
-// @description  5任务随机顺序：点赞×3、观看、分享。任务和验证按钮随机点击顺序，一次性点全部，只等一个弹窗，验证失败→关闭弹窗→刷新页面→若连续失败2次以上则暂停60秒再试。防429间隔拉长。
+// @version      2.4
+// @description  5任务随机顺序：点赞×3、观看、分享。验证失败后关闭弹窗→若连续失败2次以上暂停50秒再试，不再强制刷新导航（依赖前端自动恢复按钮状态）。防429间隔拉长。
 // @author       yigediaosi007 (modified by Grok)
 // @match        https://sosovalue.com/zh/exp
 // @match        https://sosovalue.com/zh/center
@@ -16,12 +16,10 @@
 
     const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-    // 当前任务
     const taskTypes = ["点赞", "点赞", "点赞", "观看", "分享"];
     let completedCount = 0;
-    let failCount = 0;                  // 连续验证失败次数计数
+    let failCount = 0;  // 连续验证失败次数
 
-    // Fisher-Yates shuffle
     function shuffle(array) {
         const newArray = [...array];
         for (let i = newArray.length - 1; i > 0; i--) {
@@ -81,7 +79,7 @@
             if (enabled) {
                 btn.click();
                 console.log(`已点击任务 ${i+1}: ${text}`);
-                await sleep(1500 + Math.random() * 2000);  // 1.5~3.5秒 防限流
+                await sleep(1500 + Math.random() * 2000);
             }
         }
         console.log("全部任务按钮随机点击完成！");
@@ -117,7 +115,6 @@
         return false;
     };
 
-    // 成功弹窗关闭
     const closeCongratsModal = async () => {
         for (let i = 0; i < 6; i++) {
             const btn = Array.from(document.querySelectorAll("button")).find(b => b.textContent.includes("我已了解"));
@@ -132,7 +129,6 @@
         return false;
     };
 
-    // 精确关闭验证失败弹窗（点击 × 按钮）
     const closeFailedModal = async () => {
         for (let i = 0; i < 8; i++) {
             let closeBtn = document.querySelector(
@@ -161,7 +157,6 @@
         return false;
     };
 
-    // 检测并处理验证失败弹窗（只关闭，不刷新）
     const handleFailedVerification = async () => {
         for (let i = 0; i < 10; i++) {
             const title = Array.from(document.querySelectorAll("h1, h2, .text-xl, .font-bold")).find(el =>
@@ -179,29 +174,25 @@
         return false;
     };
 
-    // 核心验证逻辑：批量点击 → 统一检查弹窗 → 处理失败
     const processVerifyButtons = async () => {
         let verifyBtns = await findVerifyButtons();
         if (verifyBtns.length === 0) return false;
 
         console.log(`准备批量点击 ${verifyBtns.length} 个验证按钮...`);
 
-        // 随机顺序 + 长间隔防限流
         const shuffled = shuffle(verifyBtns);
         for (let i = 0; i < shuffled.length; i++) {
             const btn = shuffled[i];
             if (await waitForButtonEnabled(btn, i)) {
                 btn.click();
                 console.log(`点击验证 ${i+1}/${shuffled.length}`);
-                await sleep(2500 + Math.random() * 3500);   // 2.5~6秒
+                await sleep(2500 + Math.random() * 3500);
             }
         }
 
-        // 等待弹窗
         console.log("等待弹窗出现（约4-10秒）...");
         await sleep(4000 + Math.random() * 6000);
 
-        // 检查成功弹窗
         const success = await closeCongratsModal();
         if (success) {
             completedCount += verifyBtns.length;
@@ -210,7 +201,6 @@
             return true;
         }
 
-        // 检查失败弹窗
         const isFailed = await handleFailedVerification();
 
         if (isFailed) {
@@ -218,21 +208,20 @@
             console.log(`验证失败，第 ${failCount} 次`);
 
             if (failCount >= 2) {
-                console.log("连续失败2次以上，暂停60秒等待服务器冷却...");
-                await sleep(60000);  // 60秒冷却，可自行调整为45000/90000等
-                failCount = 1;       // 冷却后降为1，避免无限等待
+                console.log("连续失败2次以上，暂停50秒等待服务器冷却...");
+                await sleep(50000);  // 修改为50秒
+                failCount = 1;       // 降为1，避免无限暂停
             }
 
-            // 刷新页面状态
-            console.log("关闭失败弹窗后，重新导航刷新...");
-            await navigateToRefresh();
-            await sleep(3000);
+            // 不再调用 navigateToRefresh()，直接继续循环检测按钮
+            console.log("失败弹窗已关闭，继续检测验证按钮是否可点击...");
         }
 
         return false;
     };
 
     const navigateToRefresh = async () => {
+        // 这个函数保留，但现在 processVerifyButtons 中不再调用它
         await clickAvatarBox();
         await sleep(900);
         await clickPersonalCenter();
@@ -319,9 +308,8 @@
             await processVerifyButtons();
             verifyCount += verifyBtns.length;
 
-            // 每3次验证刷新一次，防卡
             if (verifyCount % 3 === 0 && verifyCount > 0) {
-                console.log("每3次验证后刷新页面...");
+                console.log("每3次验证后刷新页面（可选防卡）...");
                 await navigateToRefresh();
             }
             await sleep(1000);
@@ -329,7 +317,7 @@
     };
 
     const main = async () => {
-        console.log("SOSOValue 5任务随机自动化 v2.3 开始...");
+        console.log("SOSOValue 5任务随机自动化 v2.4 开始...");
         await sleep(1500);
         await clickAllTaskButtonsAtOnce();
         console.log("所有任务按钮已随机点击，等待页面更新...");
