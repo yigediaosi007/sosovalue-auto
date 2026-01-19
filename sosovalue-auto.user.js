@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SOSOValue 自动化任务插件 - 随机版
 // @namespace    https://github.com/yigediaosi007
-// @version      2.0
-// @description  5任务随机顺序：点赞×3、观看、分享。任务和验证按钮都随机点击，极速执行，每5次自动刷新防卡。
+// @version      2.1
+// @description  5任务随机顺序：点赞×3、观看、分享。任务和验证按钮随机点击顺序，一次性点全部，只等一个弹窗，验证失败点页面任意位置关闭。优化导航：优先 id="go_exp" 返回 EXP 页，文本匹配个人中心。
 // @author       yigediaosi007 (modified by Grok)
 // @match        https://sosovalue.com/zh/exp
 // @match        https://sosovalue.com/zh/center
@@ -16,9 +16,11 @@
 
     const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+    // 当前任务（5个，根据最新确认）
     const taskTypes = ["点赞", "点赞", "点赞", "观看", "分享"];
     let completedCount = 0;
 
+    // Fisher-Yates 随机打乱
     function shuffle(array) {
         const newArray = [...array];
         for (let i = newArray.length - 1; i > 0; i--) {
@@ -185,22 +187,67 @@
     };
 
     const clickAvatarBox = async () => {
-        const selector = "div.MuiAvatar-root.MuiAvatar-circular.w-6.h-6.mui-style-3i9vrz, .avatar, img.avatar, [aria-label*='avatar'], div[role='button'] img.rounded-full";
-        const el = await waitForElement(selector, 10000);
-        el.click();
-    };
-
-    const clickPersonalCenter = async () => {
-        const items = document.querySelectorAll("[role='menuitem'], div.cursor-pointer.p-4.hover\\:bg-gray-100");
-        if (items.length >= 2) {
-            items[1].click();
+        const selector = "div.MuiAvatar-root, .avatar, img.avatar, img.rounded-full, [aria-label*='avatar' i], [data-testid*='avatar'], div[role='button'] img, .profile-avatar";
+        try {
+            const el = await waitForElement(selector, 12000);
+            console.log("找到头像元素，正在点击");
+            el.click();
+        } catch (e) {
+            console.error("未找到头像元素:", e);
         }
     };
 
+    const clickPersonalCenter = async () => {
+        const items = Array.from(document.querySelectorAll("[role='menuitem'], div.cursor-pointer.p-4.hover\\:bg-gray-100, .menu-item, li.cursor-pointer"));
+        const personalCenter = items.find(el => 
+            el.textContent.trim().includes("个人中心") || 
+            el.textContent.trim().includes("个人资料") || 
+            el.textContent.trim().includes("Profile") || 
+            el.textContent.trim().includes("Center")
+        );
+        if (personalCenter) {
+            console.log("找到并点击 '个人中心' 菜单项");
+            personalCenter.click();
+        } else {
+            console.warn("未找到‘个人中心’文本，尝试默认第2个菜单项");
+            if (items.length >= 2) {
+                items[1].click();
+            }
+        }
+        await sleep(1200);
+    };
+
     const clickExpToReturn = async () => {
-        const selector = "a[href*='/zh/exp'], span.text-base.mr-2.font-bold, div.flex.items-center.cursor-pointer";
-        const el = await waitForElement(selector, 10000);
-        el.click();
+        // 优先使用 id="go_exp"（你提供的 HTML 最可靠）
+        let el = document.getElementById("go_exp");
+
+        // fallback 到包含 Exp 文本的 div/span
+        if (!el) {
+            const candidates = document.querySelectorAll('div, span');
+            for (const candidate of candidates) {
+                if (candidate.textContent.includes("Exp") && candidate.querySelector('img[src*="exps-dark.svg"]')) {
+                    el = candidate;
+                    break;
+                }
+            }
+        }
+
+        // 再 fallback 到 class 匹配（渐变文本）
+        if (!el) {
+            el = await waitForElement(
+                'div#go_exp, div.flex.items-center.cursor-pointer, span.text-base.mr-2.font-bold.text-transparent.whitespace-nowrap.bg-clip-text, [class*="bg-clip-text"]',
+                10000,
+                500
+            );
+        }
+
+        if (el) {
+            console.log("找到 EXP 入口 (id=go_exp 或 Exp 文本)，正在点击返回");
+            el.click();
+            await sleep(1500);
+        } else {
+            console.error("未找到 EXP 跳转元素 (id=go_exp 或含 Exp 文本)，请检查页面");
+        }
     };
 
     const checkAndProcessVerifyButtons = async () => {
@@ -231,12 +278,12 @@
     };
 
     const main = async () => {
-        console.log("SOSOValue 5任务随机自动化 v2.0 开始...");
+        console.log("SOSOValue 5任务随机自动化 v2.1 开始...");
         await sleep(1500);
         await clickAllTaskButtonsAtOnce();
         console.log("所有任务按钮已随机点击，等待页面更新...");
         await sleep(3500);
-        await navigateToRefresh();
+        await navigateToRefresh(); // 初次刷新
         await checkAndProcessVerifyButtons();
         console.log("所有 5 个任务已完成！🎉");
     };
