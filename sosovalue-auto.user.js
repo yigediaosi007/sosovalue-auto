@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SOSOValue 自动化任务插件 - 随机版
 // @namespace    https://github.com/yigediaosi007
-// @version      2.6
-// @description  5任务随机顺序：点赞×3、观看、分享。第一次验证失败→关闭弹窗→完整导航（头像→个人中心→EXP）；第二次及以后失败→关闭弹窗→等待45秒再试（不导航）。防429间隔拉长。
+// @version      2.7
+// @description  5任务随机顺序：点赞×3、观看、分享。第一次验证失败→关闭弹窗→完整导航（头像→个人中心→EXP）；第二次及以后失败→关闭弹窗→等待45秒再试（不导航）。每4次验证后刷新页面防卡。
 // @author       yigediaosi007 (modified by Grok)
 // @match        https://sosovalue.com/zh/exp
 // @match        https://sosovalue.com/zh/center
@@ -208,15 +208,13 @@
             console.log(`验证失败，第 ${failCount} 次`);
 
             if (failCount === 1) {
-                // 第一次失败：完整导航（头像 → 个人中心 → EXP）
                 console.log("第一次失败 → 关闭弹窗后完整导航刷新状态...");
                 await navigateToRefresh();
-                await sleep(3000);  // 等待页面稳定
+                await sleep(3000);
             } else if (failCount >= 2) {
-                // 第二次及以后：等待45秒，不导航
                 console.log("连续失败2次以上 → 暂停45秒等待前端/服务器恢复...");
                 await sleep(45000);
-                failCount = 1;  // 降为1，避免无限暂停
+                failCount = 1;
             }
 
             console.log("失败弹窗已关闭，继续检测验证按钮是否可点击...");
@@ -312,8 +310,9 @@
             await processVerifyButtons();
             verifyCount += verifyBtns.length;
 
-            if (verifyCount % 3 === 0 && verifyCount > 0) {
-                console.log("每3次验证后刷新页面（可选防卡）...");
+            // 修改为每4次验证后刷新一次页面（防卡）
+            if (verifyCount % 4 === 0 && verifyCount > 0) {
+                console.log("每4次验证后刷新页面（防卡）...");
                 await navigateToRefresh();
             }
             await sleep(1000);
@@ -321,7 +320,7 @@
     };
 
     const main = async () => {
-        console.log("SOSOValue 5任务随机自动化 v2.6 开始...");
+        console.log("SOSOValue 5任务随机自动化 v2.7 开始...");
         await sleep(1500);
         await clickAllTaskButtonsAtOnce();
         console.log("所有任务按钮已随机点击，等待页面更新...");
