@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SOSOValue 自动化任务插件 - 随机版
 // @namespace    https://github.com/yigediaosi007
-// @version      2.8
-// @description  5任务随机顺序：点赞×3、观看、分享。第一次验证失败→完整导航；第二次及以后失败→等待45秒。捕获429限流后自动指数退避暂停（30s→90s→5min→10min上限）。每4次验证后刷新页面防卡。
+// @version      2.9
+// @description  5任务随机顺序。捕获 fetch + XHR 的 429 限流后指数退避暂停（30s→90s→5min→10min）。第一次失败完整导航，第二次及以后等待45秒。每4次验证刷新防卡。
 // @author       yigediaosi007 (modified by Grok)
 // @match        https://sosovalue.com/zh/exp
 // @match        https://sosovalue.com/zh/center
@@ -20,33 +20,54 @@
     let completedCount = 0;
     let failCount = 0;
 
-    // ==================== 429 / 限流检测与自动退避 ====================
+    // ==================== 429 / 限流检测（fetch + XHR 双重捕获） ====================
     let rateLimitCount = 0;
     let isRateLimited = false;
-    let currentBackoff = 30000; // 初始 30 秒
 
-    // 保存原始 fetch
+    // fetch 重写
     const originalFetch = window.fetch;
-
-    // 重写 fetch 捕获 429 / 503 / 限流相关
     window.fetch = async function(...args) {
         try {
             const response = await originalFetch.apply(this, args);
-
             if (response.status === 429 || response.status === 503 || response.status === 502) {
-                console.warn(`[429 检测] 捕获到 ${response.status} Too Many Requests / Service Unavailable`);
+                console.warn(`[429 捕获] fetch 状态 ${response.status}`);
                 handleRateLimit();
             }
-
             return response;
         } catch (err) {
-            if (err.message.includes('429') || err.message.includes('Too Many Requests') || 
-                err.message.includes('limit') || err.message.includes('503') || err.message.includes('502')) {
-                console.warn("[429 检测] fetch 异常中发现限流");
+            if (err.message.includes('429') || err.message.includes('Too Many Requests')) {
+                console.warn("[429 捕获] fetch 异常");
                 handleRateLimit();
             }
             throw err;
         }
+    };
+
+    // XMLHttpRequest 重写（关键：捕获网站 axios/XHR 的 429）
+    const originalXHROpen = XMLHttpRequest.prototype.open;
+    const originalXHRSend = XMLHttpRequest.prototype.send;
+
+    XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+        this._url = url;  // 记录请求 URL
+        return originalXHROpen.apply(this, [method, url, ...rest]);
+    };
+
+    XMLHttpRequest.prototype.send = function(...args) {
+        this.addEventListener('load', () => {
+            if (this.status === 429 || this.status === 503 || this.status === 502) {
+                console.warn(`[429 捕获] XHR 状态 ${this.status} on ${this._url}`);
+                handleRateLimit();
+            }
+        });
+
+        this.addEventListener('error', (e) => {
+            if (e.target.status === 429 || e.target.status === 0) {  // 0 也可能是 CORS + 429
+                console.warn("[429 捕获] XHR error 事件，可能限流");
+                handleRateLimit();
+            }
+        });
+
+        return originalXHRSend.apply(this, args);
     };
 
     function handleRateLimit() {
@@ -55,25 +76,27 @@
         rateLimitCount++;
 
         let waitTime;
-        if (rateLimitCount === 1) waitTime = 30000;      // 30s
-        else if (rateLimitCount === 2) waitTime = 90000; // 90s
-        else if (rateLimitCount === 3) waitTime = 300000;// 5min
-        else waitTime = 600000;                          // 10min 上限
+        if (rateLimitCount === 1)      waitTime = 30000;   // 30s
+        else if (rateLimitCount === 2) waitTime = 90000;   // 90s
+        else if (rateLimitCount === 3) waitTime = 300000;  // 5min
+        else                           waitTime = 600000;  // 10min 上限
 
-        console.log(`[限流] 第 ${rateLimitCount} 次触发，暂停 ${waitTime/1000} 秒...`);
+        console.log(`[限流] 第 ${rateLimitCount} 次触发 → 暂停 ${waitTime/1000} 秒...`);
         setTimeout(() => {
-            console.log(`[限流] 暂停结束，尝试恢复...`);
+            console.log("[限流] 暂停结束，尝试继续...");
             isRateLimited = false;
         }, waitTime);
     }
 
     function checkRateLimit() {
         if (isRateLimited) {
-            console.log("[限流中] 暂停操作，等待恢复...");
+            console.log("[限流保护] 当前暂停中，跳过操作...");
             return true;
         }
         return false;
     }
+
+    // ==================== 其他函数保持不变 ====================
 
     function shuffle(array) {
         const newArray = [...array];
@@ -137,7 +160,7 @@
             if (enabled) {
                 btn.click();
                 console.log(`已点击任务 ${i+1}: ${text}`);
-                await sleep(3000 + Math.random() * 4000);  // 加长到 3~7 秒
+                await sleep(3000 + Math.random() * 4000);
             }
         }
         console.log("全部任务按钮随机点击完成！");
@@ -145,7 +168,7 @@
 
     const findVerifyButtons = async () => {
         let elapsed = 0;
-        const maxWait = 15000, interval = 1000; // 检测间隔加长
+        const maxWait = 15000, interval = 1000;
         while (elapsed < maxWait) {
             if (checkRateLimit()) return [];
             const buttons = Array.from(document.querySelectorAll("div.grid.mt-3 > button"));
@@ -167,7 +190,7 @@
         let elapsed = 0;
         while (elapsed < 12000) {
             if (!btn.disabled && btn.getAttribute("disabled") === null) return true;
-            await sleep(1000); // 加长
+            await sleep(1000);
             elapsed += 1000;
         }
         console.log(`按钮 ${idx+1} 等待超时仍不可点`);
@@ -181,7 +204,7 @@
                 btn.click();
                 console.log("关闭“恭喜”弹窗");
                 await sleep(2000);
-                rateLimitCount = 0; // 成功，重置限流计数
+                rateLimitCount = 0;  // 成功重置限流计数
                 return true;
             }
             await sleep(400);
@@ -249,7 +272,7 @@
             if (await waitForButtonEnabled(btn, i)) {
                 btn.click();
                 console.log(`点击验证 ${i+1}/${shuffled.length}`);
-                await sleep(3500 + Math.random() * 4500); // 3.5~8 秒
+                await sleep(3500 + Math.random() * 4500);
             }
         }
 
@@ -261,7 +284,7 @@
             completedCount += verifyBtns.length;
             console.log(`本轮验证成功，累计完成 ${completedCount} 个`);
             failCount = 0;
-            rateLimitCount = 0; // 成功，重置限流计数
+            rateLimitCount = 0;
             return true;
         }
 
@@ -361,7 +384,7 @@
         let retry = 0;
         while (!checkAllTasksCompleted()) {
             if (checkRateLimit()) {
-                await sleep(5000); // 每5秒检查一次恢复
+                await sleep(5000);
                 continue;
             }
 
@@ -384,12 +407,12 @@
                 console.log("每4次验证后刷新页面（防卡）...");
                 await navigateToRefresh();
             }
-            await sleep(8000 + Math.random() * 4000); // 8~12 秒循环间隔
+            await sleep(8000 + Math.random() * 4000);
         }
     };
 
     const main = async () => {
-        console.log("SOSOValue 5任务随机自动化 v2.8 开始... (已启用 429 限流自动暂停)");
+        console.log("SOSOValue 5任务随机自动化 v2.8 开始... (XHR + fetch 双重 429 检测已启用)");
         await sleep(1500);
         await clickAllTaskButtonsAtOnce();
         console.log("所有任务按钮已随机点击，等待页面更新...");
