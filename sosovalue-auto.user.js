@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SOSOValue 自动化任务插件 - 随机版
 // @namespace    https://github.com/yigediaosi007
-// @version      2.9
-// @description  5任务随机顺序。捕获 fetch + XHR 的 429 限流后指数退避暂停（30s→90s→5min→10min）。第一次失败完整导航，第二次及以后等待45秒。每4次验证刷新防卡。
+// @version      3.0
+// @description  动态检测所有未完成任务（点赞/观看/分享/引用/回复等），随机顺序处理。第一次验证失败→完整导航；第二次及以后失败→等待45秒。每4次验证刷新防卡。捕获429限流自动暂停。
 // @author       yigediaosi007 (modified by Grok)
 // @match        https://sosovalue.com/zh/exp
 // @match        https://sosovalue.com/zh/center
@@ -16,15 +16,10 @@
 
     const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-    const taskTypes = ["点赞", "点赞", "点赞", "观看", "分享"];
-    let completedCount = 0;
-    let failCount = 0;
-
-    // ==================== 429 / 限流检测（fetch + XHR 双重捕获） ====================
+    // ==================== 429 / 限流检测（fetch + XHR） ====================
     let rateLimitCount = 0;
     let isRateLimited = false;
 
-    // fetch 重写
     const originalFetch = window.fetch;
     window.fetch = async function(...args) {
         try {
@@ -43,12 +38,11 @@
         }
     };
 
-    // XMLHttpRequest 重写（关键：捕获网站 axios/XHR 的 429）
     const originalXHROpen = XMLHttpRequest.prototype.open;
     const originalXHRSend = XMLHttpRequest.prototype.send;
 
     XMLHttpRequest.prototype.open = function(method, url, ...rest) {
-        this._url = url;  // 记录请求 URL
+        this._url = url;
         return originalXHROpen.apply(this, [method, url, ...rest]);
     };
 
@@ -59,14 +53,12 @@
                 handleRateLimit();
             }
         });
-
         this.addEventListener('error', (e) => {
-            if (e.target.status === 429 || e.target.status === 0) {  // 0 也可能是 CORS + 429
+            if (e.target.status === 429 || e.target.status === 0) {
                 console.warn("[429 捕获] XHR error 事件，可能限流");
                 handleRateLimit();
             }
         });
-
         return originalXHRSend.apply(this, args);
     };
 
@@ -76,10 +68,10 @@
         rateLimitCount++;
 
         let waitTime;
-        if (rateLimitCount === 1)      waitTime = 30000;   // 30s
-        else if (rateLimitCount === 2) waitTime = 90000;   // 90s
-        else if (rateLimitCount === 3) waitTime = 300000;  // 5min
-        else                           waitTime = 600000;  // 10min 上限
+        if (rateLimitCount === 1)      waitTime = 30000;
+        else if (rateLimitCount === 2) waitTime = 90000;
+        else if (rateLimitCount === 3) waitTime = 300000;
+        else                           waitTime = 600000;
 
         console.log(`[限流] 第 ${rateLimitCount} 次触发 → 暂停 ${waitTime/1000} 秒...`);
         setTimeout(() => {
@@ -96,7 +88,52 @@
         return false;
     }
 
-    // ==================== 其他函数保持不变 ====================
+    // ==================== 动态任务检测 ====================
+    // 支持的关键词（可随时加新任务类型）
+    const supportedTaskKeywords = ["点赞", "观看", "分享", "引用", "回复", "点zan", "guan kan", "fen xiang"];
+
+    async function getAllAvailableTasks() {
+        const buttons = Array.from(document.querySelectorAll("div.grid.mt-3 > button"));
+        const available = buttons.filter(btn => {
+            if (btn.hasAttribute("disabled")) return false;
+            const text = btn.querySelector("span.transition-opacity.font-medium")?.textContent || "";
+            return supportedTaskKeywords.some(kw => text.includes(kw));
+        });
+
+        if (available.length === 0) {
+            console.log("未找到任何可做的任务按钮");
+            return [];
+        }
+
+        console.log(`检测到 ${available.length} 个可做任务（动态检测）`);
+        return available;
+    }
+
+    const clickAllTaskButtonsAtOnce = async () => {
+        if (checkRateLimit()) return;
+
+        console.log("开始随机点击所有可做任务按钮...");
+        const availableButtons = await getAllAvailableTasks();
+
+        if (availableButtons.length === 0) return;
+
+        const shuffledButtons = shuffle(availableButtons);
+
+        for (let i = 0; i < shuffledButtons.length; i++) {
+            if (checkRateLimit()) break;
+            const btn = shuffledButtons[i];
+            const text = btn.querySelector("span.transition-opacity.font-medium")?.textContent || "未知";
+            const enabled = await waitForButtonEnabled(btn, i);
+            if (enabled) {
+                btn.click();
+                console.log(`已点击任务 ${i+1}/${shuffledButtons.length}: ${text}`);
+                await sleep(3000 + Math.random() * 4000);
+            }
+        }
+        console.log("所有任务按钮随机点击完成！");
+    };
+
+    // ==================== 其余函数保持不变 ====================
 
     function shuffle(array) {
         const newArray = [...array];
@@ -129,41 +166,8 @@
             btn.querySelector("span.transition-opacity.font-medium")?.textContent.includes("完成") &&
             btn.hasAttribute("disabled")
         );
-        console.log(`已完成任务数: ${completed.length}/5`);
-        return completed.length >= 5;
-    };
-
-    const clickAllTaskButtonsAtOnce = async () => {
-        if (checkRateLimit()) return;
-
-        console.log("开始随机点击全部 5 个任务按钮...");
-        const buttons = Array.from(document.querySelectorAll("div.grid.mt-3 > button"));
-
-        const availableButtons = buttons.filter(btn => {
-            if (btn.hasAttribute("disabled")) return false;
-            const text = btn.querySelector("span.transition-opacity.font-medium")?.textContent || "";
-            return taskTypes.some(type => text.includes(type));
-        });
-
-        if (availableButtons.length === 0) {
-            console.log("未找到任何可点击的任务按钮");
-            return;
-        }
-
-        const shuffledButtons = shuffle(availableButtons);
-
-        for (let i = 0; i < shuffledButtons.length; i++) {
-            if (checkRateLimit()) break;
-            const btn = shuffledButtons[i];
-            const text = btn.querySelector("span.transition-opacity.font-medium")?.textContent || "未知";
-            const enabled = await waitForButtonEnabled(btn, i);
-            if (enabled) {
-                btn.click();
-                console.log(`已点击任务 ${i+1}: ${text}`);
-                await sleep(3000 + Math.random() * 4000);
-            }
-        }
-        console.log("全部任务按钮随机点击完成！");
+        console.log(`已完成任务数: ${completed.length}`);
+        return completed.length === buttons.length || completed.length >= 7; // 假设最多7个
     };
 
     const findVerifyButtons = async () => {
@@ -204,7 +208,7 @@
                 btn.click();
                 console.log("关闭“恭喜”弹窗");
                 await sleep(2000);
-                rateLimitCount = 0;  // 成功重置限流计数
+                rateLimitCount = 0;
                 return true;
             }
             await sleep(400);
@@ -412,14 +416,14 @@
     };
 
     const main = async () => {
-        console.log("SOSOValue 5任务随机自动化 v2.8 开始... (XHR + fetch 双重 429 检测已启用)");
+        console.log("SOSOValue 自动化任务插件 v3.0 开始... (动态任务检测 + 完整429捕获)");
         await sleep(1500);
-        await clickAllTaskButtonsAtOnce();
+        await clickAllTaskButtonsAtOnce();  // 这里会自动检测所有任务
         console.log("所有任务按钮已随机点击，等待页面更新...");
         await sleep(3500);
         await navigateToRefresh();
         await checkAndProcessVerifyButtons();
-        console.log("所有 5 个任务已完成！🎉");
+        console.log("所有任务已完成！🎉");
     };
 
     (async () => {
