@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SOSOValue 自动化任务插件 - 随机版
 // @namespace    https://github.com/yigediaosi007
-// @version      3.1
-// @description  动态检测所有任务。找不到验证按钮时检查是否全部完成：有未完成→导航刷新；全部完成→结束脚本。第一次失败完整导航，第二次及以后等待45秒。每4次验证刷新防卡。捕获429自动暂停。
+// @version      3.2
+// @description  动态检测所有未完成任务（点赞/观看/分享/引用/回复等），随机顺序处理。找不到验证按钮时检查是否全部完成：有未完成→导航刷新；全部完成→结束脚本。第一次失败完整导航，第二次及以后等待45秒。每4次验证刷新防卡。捕获429限流自动暂停。
 // @author       yigediaosi007 (modified by Grok)
 // @match        https://sosovalue.com/zh/exp
 // @match        https://sosovalue.com/zh/center
@@ -88,6 +88,10 @@
         return false;
     }
 
+    // ==================== 全局变量 ====================
+    let completedCount = 0;
+    let failCount = 0;  // 验证失败计数
+
     // ==================== 动态任务检测 ====================
     const supportedTaskKeywords = ["点赞", "观看", "分享", "引用", "回复", "点zan", "guan kan", "fen xiang"];
 
@@ -165,7 +169,7 @@
         );
         const totalButtons = buttons.length;
         console.log(`已完成任务数: ${completed.length} / 总任务数: ${totalButtons}`);
-        return completed.length === totalButtons && totalButtons > 0; // 所有按钮都完成且有按钮存在
+        return completed.length === totalButtons && totalButtons > 0;
     };
 
     const findVerifyButtons = async () => {
@@ -399,7 +403,6 @@
 
             const verifyBtns = await findVerifyButtons();
             if (verifyBtns.length === 0) {
-                // 找不到验证按钮 → 检查是否还有未完成任务
                 console.log("未找到验证按钮，检查整体任务完成情况...");
                 if (checkAllTasksCompleted()) {
                     console.log("所有任务已完成，无需继续，脚本结束");
