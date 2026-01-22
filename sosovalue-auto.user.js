@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SOSOValue 自动化任务插件 - 随机版
 // @namespace    https://github.com/yigediaosi007
-// @version      3.0
-// @description  动态检测所有未完成任务（点赞/观看/分享/引用/回复等），随机顺序处理。第一次验证失败→完整导航；第二次及以后失败→等待45秒。每4次验证刷新防卡。捕获429限流自动暂停。
+// @version      3.1
+// @description  动态检测所有任务。找不到验证按钮时检查是否全部完成：有未完成→导航刷新；全部完成→结束脚本。第一次失败完整导航，第二次及以后等待45秒。每4次验证刷新防卡。捕获429自动暂停。
 // @author       yigediaosi007 (modified by Grok)
 // @match        https://sosovalue.com/zh/exp
 // @match        https://sosovalue.com/zh/center
@@ -89,7 +89,6 @@
     }
 
     // ==================== 动态任务检测 ====================
-    // 支持的关键词（可随时加新任务类型）
     const supportedTaskKeywords = ["点赞", "观看", "分享", "引用", "回复", "点zan", "guan kan", "fen xiang"];
 
     async function getAllAvailableTasks() {
@@ -133,8 +132,6 @@
         console.log("所有任务按钮随机点击完成！");
     };
 
-    // ==================== 其余函数保持不变 ====================
-
     function shuffle(array) {
         const newArray = [...array];
         for (let i = newArray.length - 1; i > 0; i--) {
@@ -166,8 +163,9 @@
             btn.querySelector("span.transition-opacity.font-medium")?.textContent.includes("完成") &&
             btn.hasAttribute("disabled")
         );
-        console.log(`已完成任务数: ${completed.length}`);
-        return completed.length === buttons.length || completed.length >= 7; // 假设最多7个
+        const totalButtons = buttons.length;
+        console.log(`已完成任务数: ${completed.length} / 总任务数: ${totalButtons}`);
+        return completed.length === totalButtons && totalButtons > 0; // 所有按钮都完成且有按钮存在
     };
 
     const findVerifyButtons = async () => {
@@ -187,6 +185,7 @@
             await sleep(interval);
             elapsed += interval;
         }
+        console.log("未找到任何验证按钮（超时或全部完成）");
         return [];
     };
 
@@ -386,23 +385,38 @@
     const checkAndProcessVerifyButtons = async () => {
         let verifyCount = 0;
         let retry = 0;
-        while (!checkAllTasksCompleted()) {
+        while (true) {
             if (checkRateLimit()) {
                 await sleep(5000);
                 continue;
             }
 
+            // 先检查是否全部完成
+            if (checkAllTasksCompleted()) {
+                console.log("所有任务已完成，脚本结束");
+                break;
+            }
+
             const verifyBtns = await findVerifyButtons();
             if (verifyBtns.length === 0) {
-                retry++;
-                if (retry >= 6) {
-                    if (checkAllTasksCompleted()) break;
-                    console.log("任务仍未全部完成，脚本停止");
+                // 找不到验证按钮 → 检查是否还有未完成任务
+                console.log("未找到验证按钮，检查整体任务完成情况...");
+                if (checkAllTasksCompleted()) {
+                    console.log("所有任务已完成，无需继续，脚本结束");
                     break;
+                } else {
+                    console.log("还有未完成任务 → 执行一次完整导航刷新状态");
+                    await navigateToRefresh();
+                    await sleep(3000);
+                    retry++;
+                    if (retry >= 6) {
+                        console.log("多次刷新仍未找到验证按钮且任务未全完成，停止脚本");
+                        break;
+                    }
+                    continue;
                 }
-                await sleep(8000);
-                continue;
             }
+
             retry = 0;
             await processVerifyButtons();
             verifyCount += verifyBtns.length;
@@ -411,19 +425,20 @@
                 console.log("每4次验证后刷新页面（防卡）...");
                 await navigateToRefresh();
             }
+
             await sleep(8000 + Math.random() * 4000);
         }
     };
 
     const main = async () => {
-        console.log("SOSOValue 自动化任务插件 v3.0 开始... (动态任务检测 + 完整429捕获)");
+        console.log("SOSOValue 自动化任务插件 v3.1 开始... (动态任务 + 找不到验证按钮时智能检查完成度)");
         await sleep(1500);
-        await clickAllTaskButtonsAtOnce();  // 这里会自动检测所有任务
+        await clickAllTaskButtonsAtOnce();
         console.log("所有任务按钮已随机点击，等待页面更新...");
         await sleep(3500);
         await navigateToRefresh();
         await checkAndProcessVerifyButtons();
-        console.log("所有任务已完成！🎉");
+        console.log("脚本执行完毕！🎉");
     };
 
     (async () => {
