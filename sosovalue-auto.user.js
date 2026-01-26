@@ -2,7 +2,7 @@
 // @name         SOSOValue 自动化任务插件 - 随机版
 // @namespace    https://github.com/yigediaosi007
 // @version      3.6
-// @description  动态检测所有任务。加强开头页面加载等待，确保任务按钮完全渲染。找不到验证按钮时检查是否全部完成：有未完成→导航刷新；全部完成→结束并显示顶部弹窗。第一次失败完整导航，第二次及以后等待45秒。每4次验证刷新防卡。捕获429限流自动暂停。
+// @description  动态检测所有任务。加强开头等待（页面加载 + 网格出现 + 额外缓冲），确保按钮全渲染。找不到验证按钮时检查是否全部完成：有未完成→导航刷新；全部完成→结束并显示顶部弹窗。第一次失败完整导航，第二次及以后等待45秒。每4次验证刷新防卡。捕获429限流自动暂停。
 // @author       yigediaosi007 (modified by Grok)
 // @match        https://sosovalue.com/zh/exp
 // @match        https://sosovalue.com/zh/center
@@ -132,8 +132,8 @@
     // ==================== 缓存任务容器 ====================
     async function getTaskContainer() {
         if (!taskContainer) {
-            taskContainer = await waitForElement("div.grid.mt-3", 30000);  // 加长等待到30s，确保网格加载
-            console.log("任务容器 div.grid.mt-3 已加载");
+            taskContainer = await waitForElement("div.grid.mt-3", 30000);  // 等待30s，确保网格加载
+            console.log("任务网格 div.grid.mt-3 已加载");
         }
         return taskContainer;
     }
@@ -143,8 +143,9 @@
         const container = await getTaskContainer();
         if (!container) return [];
 
-        // 额外等待 2 秒，确保按钮完全渲染
-        await sleep(2000);
+        // 额外等待 5 秒，确保所有任务盒子完全渲染
+        console.log("额外等待 5 秒，确保任务按钮渲染完成...");
+        await sleep(5000);
 
         const buttons = Array.from(container.querySelectorAll("button"));
         const available = buttons.filter(btn => {
@@ -158,7 +159,7 @@
         });
 
         if (available.length === 0) {
-            console.log("未找到任何可做的任务按钮");
+            console.log("未找到任何可做的任务按钮（可能已全部完成或加载失败）");
             return [];
         }
 
@@ -209,14 +210,14 @@
             console.log("页面 load 事件触发");
             resolve();
         }, { once: true });
-        // 额外兜底：如果 30 秒后还没 complete，也强制继续（防卡）
+        // 兜底超时 40 秒强制继续
         setTimeout(() => {
-            console.warn("页面加载超时 30s，强制继续（可能部分元素未加载）");
+            console.warn("页面加载超时 40s，强制继续（可能部分元素未加载）");
             resolve();
-        }, 30000);
+        }, 40000);
     });
 
-    const waitForElement = async (selector, timeout = 30000, interval = 800) => {  // 加长超时到30s，间隔800ms
+    const waitForElement = async (selector, timeout = 30000, interval = 800) => {
         let elapsed = 0;
         while (elapsed < timeout) {
             const el = document.querySelector(selector);
@@ -228,7 +229,7 @@
             elapsed += interval;
         }
         console.warn(`超时未找到元素: ${selector}`);
-        return null;  // 返回 null 而非 throw，避免崩溃
+        return null;
     };
 
     const checkAllTasksCompleted = () => {
@@ -501,14 +502,18 @@
     };
 
     const main = async () => {
-        console.log("SOSOValue 自动化任务插件 v3.5 开始... (加强页面加载等待 + 精准选择器)");
-        // 加强开头等待：先等页面完全加载，再额外等任务网格出现
+        console.log("SOSOValue 自动化任务插件 v3.6 开始... (加强页面加载等待，确保任务全渲染)");
+        // 加强开头等待
         await waitForPageLoad();
-        console.log("页面 load 完成，开始额外等待任务网格...");
-        await waitForElement("div.grid.mt-3", 30000);  // 确保网格加载
-        console.log("任务网格已加载，继续执行");
+        console.log("页面 load 完成，开始等待任务网格...");
+        const grid = await waitForElement("div.grid.mt-3", 40000);  // 等待40s，确保网格加载
+        if (grid) {
+            console.log("任务网格已加载，额外等待 5 秒确保按钮渲染");
+            await sleep(5000);  // 额外 5s 缓冲
+        } else {
+            console.warn("任务网格超时未找到，强制继续（可能部分任务未加载）");
+        }
 
-        await sleep(2000);  // 额外 2s 缓冲，确保所有按钮渲染
         await clickAllTaskButtonsAtOnce();
         console.log("所有任务按钮已随机点击，等待页面更新...");
         await sleep(3500);
