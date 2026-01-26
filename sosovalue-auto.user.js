@@ -2,7 +2,7 @@
 // @name         SOSOValue 自动化任务插件 - 随机版
 // @namespace    https://github.com/yigediaosi007
 // @version      3.6
-// @description  动态检测并点击所有可见任务按钮（点赞/观看/分享等），点击后动态等待验证按钮出现。找不到验证按钮时检查是否全部完成：有未完成→导航刷新；全部完成→结束并显示顶部弹窗。第一次失败完整导航，第二次及以后等待45秒。每4次验证刷新防卡。捕获429限流自动暂停。
+// @description  动态检测并循环点击所有可见任务按钮（点赞/观看/分享等），点击后动态等待验证按钮出现。找不到验证按钮时检查是否全部完成：有未完成→导航刷新；全部完成→结束并显示顶部弹窗。第一次失败完整导航，第二次及以后等待45秒。每4次验证刷新防卡。捕获429限流自动暂停。
 // @author       yigediaosi007 (modified by Grok)
 // @match        https://sosovalue.com/zh/exp
 // @match        https://sosovalue.com/zh/center
@@ -15,6 +15,23 @@
     'use strict';
 
     const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+    // ==================== 页面加载等待（关键！） ====================
+    const waitForPageLoad = () => new Promise(resolve => {
+        if (document.readyState === 'complete') {
+            console.log("页面 readyState 已 complete");
+            resolve();
+            return;
+        }
+        window.addEventListener('load', () => {
+            console.log("页面 load 事件触发");
+            resolve();
+        }, { once: true });
+        setTimeout(() => {
+            console.warn("页面加载超时 40s，强制继续");
+            resolve();
+        }, 40000);
+    });
 
     // ==================== 429 / 限流检测 ====================
     let rateLimitCount = 0;
@@ -132,7 +149,7 @@
     // ==================== 缓存任务容器 ====================
     async function getTaskContainer() {
         if (!taskContainer) {
-            taskContainer = await waitForElement("div.grid.mt-3", 40000);  // 等待40s
+            taskContainer = await waitForElement("div.grid.mt-3", 40000);
             console.log("任务网格 div.grid.mt-3 已加载");
         }
         return taskContainer;
@@ -143,20 +160,20 @@
         const container = await getTaskContainer();
         if (!container) return [];
 
-        // 额外动态等待：每秒检查一次，最多等10秒，直到至少有2个任务按钮或超时
+        // 动态等待：每秒检查一次，最多等15秒，直到至少有2个任务按钮或超时
         let attempts = 0;
-        while (attempts < 10) {
+        while (attempts < 15) {
             const buttons = Array.from(container.querySelectorAll("button"));
             const count = buttons.filter(btn => {
                 const span = btn.querySelector("span.transition-opacity.font-medium");
                 return span && ["点赞", "观看", "分享", "验证", "引用", "回复"].includes(span.textContent.trim());
             }).length;
 
-            if (count >= 2) {  // 至少2个任务才认为加载完成
+            if (count >= 2) {
                 console.log(`任务按钮加载完成（检测到 ${count} 个）`);
                 break;
             }
-            console.log(`任务按钮加载中... 当前检测到 ${count} 个，等待第 ${attempts+1}/10 秒`);
+            console.log(`任务按钮加载中... 当前检测到 ${count} 个，等待第 ${attempts+1}/15 秒`);
             await sleep(1000);
             attempts++;
         }
@@ -182,12 +199,11 @@
     const clickAllTaskButtonsAtOnce = async () => {
         if (checkRateLimit()) return;
 
-        console.log("开始随机点击所有可做任务按钮...");
+        console.log("开始循环点击所有可见任务按钮...");
         let availableButtons = await getAllAvailableTasks();
 
         if (availableButtons.length === 0) return;
 
-        // 循环点击，直到没有新任务按钮出现（防动态加载）
         let previousCount = 0;
         while (availableButtons.length > 0) {
             const shuffledButtons = shuffle(availableButtons);
@@ -204,8 +220,8 @@
                 }
             }
 
-            // 重新扫描，看是否有新任务出现（比如点击后出现的验证按钮）
-            await sleep(2000);  // 给页面反应时间
+            // 重新扫描，看是否有新任务/验证按钮出现
+            await sleep(3000);  // 给页面更多反应时间
             availableButtons = await getAllAvailableTasks();
             if (availableButtons.length === previousCount) {
                 console.log("没有新任务按钮出现，任务点击阶段结束");
@@ -214,22 +230,16 @@
             previousCount = availableButtons.length;
             console.log(`检测到新任务按钮，继续点击... 当前 ${availableButtons.length} 个`);
         }
-        console.log("所有任务按钮随机点击完成！");
+        console.log("所有可见任务按钮处理完成！");
     };
 
-    // ==================== 其余函数保持不变（省略以节省空间） ====================
-    // ...（把你之前 3.3 版的其余函数复制进来，包括 shuffle、waitForPageLoad、waitForElement、checkAllTasksCompleted、findVerifyButtons、waitForButtonEnabled、closeCongratsModal、closeFailedModal、handleFailedVerification、processVerifyButtons、navigateToRefresh、clickAvatarBox、clickPersonalCenter、clickExpToReturn、checkAndProcessVerifyButtons、main 等）
+    // ==================== 其余函数保持不变 ====================
+    // （这里省略了 shuffle、waitForPageLoad、waitForElement、checkAllTasksCompleted、findVerifyButtons、waitForButtonEnabled、closeCongratsModal、closeFailedModal、handleFailedVerification、processVerifyButtons、navigateToRefresh、clickAvatarBox、clickPersonalCenter、clickExpToReturn、checkAndProcessVerifyButtons、main 函数）
 
-    // 注意：在 checkAndProcessVerifyButtons 的完成判断处调用 showCompletionPopup()
-    // 示例：
-    // if (checkAllTasksCompleted()) {
-    //     console.log("所有任务已完成，脚本结束");
-    //     showCompletionPopup();
-    //     break;
-    // }
+    // 注意：请把你之前 3.3 版的这些函数完整复制进来，只替换上面的 clickAllTaskButtonsAtOnce 和 getAllAvailableTasks
 
     const main = async () => {
-        console.log("SOSOValue 自动化任务插件 v3.6 开始... (加强动态加载等待 + 循环点击所有任务)");
+        console.log("SOSOValue 自动化任务插件 v3.6 开始... (循环点击 + 动态等待验证按钮)");
         await waitForPageLoad();
         console.log("页面 load 完成，开始等待任务网格...");
         const grid = await waitForElement("div.grid.mt-3", 40000);
@@ -241,7 +251,7 @@
         }
 
         await clickAllTaskButtonsAtOnce();
-        console.log("所有任务按钮处理完成，进入验证阶段...");
+        console.log("任务点击阶段完成，进入验证阶段...");
         await navigateToRefresh();
         await checkAndProcessVerifyButtons();
         console.log("脚本执行完毕！🎉");
