@@ -2,7 +2,7 @@
 // @name         SOSOValue 自动化任务插件 - 随机版
 // @namespace    https://github.com/yigediaosi007
 // @version      3.5
-// @description  动态检测所有任务。优化速度：缩短轮询间隔、缓存任务容器、减少无效等待、主循环间隔5~8s、按钮等待10s。找不到验证按钮时检查是否全部完成：有未完成→导航刷新；全部完成→结束脚本并显示顶部弹窗。第一次失败完整导航，第二次及以后等待45秒。每4次验证刷新防卡。捕获429限流自动暂停。
+// @description  动态检测所有未完成任务（点赞/观看/分享等），随机顺序处理。找不到验证按钮时检查是否全部完成：有未完成→导航刷新；全部完成→结束脚本并显示顶部弹窗。第一次失败完整导航，第二次及以后等待45秒。每4次验证刷新防卡。捕获429限流自动暂停。
 // @author       yigediaosi007 (modified by Grok)
 // @match        https://sosovalue.com/zh/exp
 // @match        https://sosovalue.com/zh/center
@@ -16,7 +16,7 @@
 
     const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-    // ==================== 429 / 限流检测（fetch + XHR） ====================
+    // ==================== 429 / 限流检测 ====================
     let rateLimitCount = 0;
     let isRateLimited = false;
 
@@ -91,11 +91,9 @@
     // ==================== 全局变量 ====================
     let completedCount = 0;
     let failCount = 0;
-
-    // 缓存任务容器（优化 DOM 查询）
     let taskContainer = null;
 
-    // ==================== 自定义顶部小弹窗（任务完成提示） ====================
+    // ==================== 自定义顶部小弹窗 ====================
     function showCompletionPopup() {
         const popup = document.createElement('div');
         popup.id = 'sosovalue-completion-popup';
@@ -131,9 +129,7 @@
         document.body.appendChild(popup);
     }
 
-    // ==================== 动态任务检测 ====================
-    const supportedTaskKeywords = ["点赞", "观看", "分享", "引用", "回复", "点zan", "guan kan", "fen xiang"];
-
+    // ==================== 缓存任务容器 ====================
     async function getTaskContainer() {
         if (!taskContainer) {
             taskContainer = await waitForElement("div.grid.mt-3", 20000);
@@ -141,6 +137,7 @@
         return taskContainer;
     }
 
+    // ==================== 动态获取所有可做任务按钮 ====================
     async function getAllAvailableTasks() {
         const container = await getTaskContainer();
         if (!container) return [];
@@ -148,8 +145,12 @@
         const buttons = Array.from(container.querySelectorAll("button"));
         const available = buttons.filter(btn => {
             if (btn.hasAttribute("disabled")) return false;
-            const text = btn.querySelector("span.transition-opacity.font-medium")?.textContent || "";
-            return supportedTaskKeywords.some(kw => text.includes(kw));
+            const span = btn.querySelector("span.transition-opacity.font-medium");
+            if (!span) return false;
+            const text = span.textContent.trim();
+            // 精确匹配常见任务文本（根据你提供的 HTML）
+            return text === "点赞" || text === "观看" || text === "分享" || 
+                   text === "引用" || text === "回复" || text === "验证";
         });
 
         if (available.length === 0) {
@@ -174,7 +175,7 @@
         for (let i = 0; i < shuffledButtons.length; i++) {
             if (checkRateLimit()) break;
             const btn = shuffledButtons[i];
-            const text = btn.querySelector("span.transition-opacity.font-medium")?.textContent || "未知";
+            const text = btn.querySelector("span.transition-opacity.font-medium")?.textContent.trim() || "未知";
             const enabled = await waitForButtonEnabled(btn, i);
             if (enabled) {
                 btn.click();
@@ -185,6 +186,7 @@
         console.log("所有任务按钮随机点击完成！");
     };
 
+    // ==================== 其余函数保持优化版 ====================
     function shuffle(array) {
         const newArray = [...array];
         for (let i = newArray.length - 1; i > 0; i--) {
@@ -213,7 +215,7 @@
     const checkAllTasksCompleted = () => {
         const buttons = Array.from(document.querySelectorAll("div.grid.mt-3 > button"));
         const completed = buttons.filter(btn =>
-            btn.querySelector("span.transition-opacity.font-medium")?.textContent.includes("完成") &&
+            btn.querySelector("span.transition-opacity.font-medium")?.textContent.trim() === "完成" &&
             btn.hasAttribute("disabled")
         );
         const totalButtons = buttons.length;
@@ -223,18 +225,18 @@
 
     const findVerifyButtons = async () => {
         let elapsed = 0;
-        const maxWait = 12000;  // 缩短到12秒
-        const interval = 1200;  // 每1.2秒查一次
+        const maxWait = 12000;
+        const interval = 1200;
         const container = await getTaskContainer();
         if (!container) return [];
 
         while (elapsed < maxWait) {
             if (checkRateLimit()) return [];
             const buttons = Array.from(container.querySelectorAll("button"));
-            const verifyBtns = buttons.filter(btn =>
-                btn.querySelector("span.transition-opacity.font-medium")?.textContent.includes("验证") &&
-                !btn.hasAttribute("disabled")
-            );
+            const verifyBtns = buttons.filter(btn => {
+                const span = btn.querySelector("span.transition-opacity.font-medium");
+                return span && span.textContent.trim() === "验证" && !btn.hasAttribute("disabled");
+            });
             if (verifyBtns.length > 0) {
                 console.log(`找到 ${verifyBtns.length} 个验证按钮`);
                 return verifyBtns;
@@ -248,8 +250,8 @@
 
     const waitForButtonEnabled = async (btn, idx) => {
         let elapsed = 0;
-        const maxWait = 10000;  // 缩短到10秒
-        const interval = 1000;  // 每1秒查一次
+        const maxWait = 10000;
+        const interval = 1000;
         while (elapsed < maxWait) {
             if (!btn.disabled && btn.getAttribute("disabled") === null) return true;
             await sleep(interval);
@@ -383,47 +385,40 @@
     };
 
     const clickAvatarBox = async () => {
-        const selector = "div.MuiAvatar-root, .avatar, img.avatar, img.rounded-full, [aria-label*='avatar' i], [data-testid*='avatar'], div[role='button'] img, .profile-avatar";
-        try {
-            const el = await waitForElement(selector, 12000);
+        // 优先用 id="go_profile"（你提供的 HTML）
+        let el = document.getElementById("go_profile");
+        if (!el) {
+            const selector = "button[aria-label='Open user menu'], div.MuiAvatar-root, .avatar, img.avatar, img.rounded-full, [aria-label*='avatar' i], [data-testid*='avatar'], div[role='button'] img";
+            el = await waitForElement(selector, 12000);
+        }
+        if (el) {
             console.log("找到头像元素，正在点击");
             el.click();
-        } catch (e) {
-            console.error("未找到头像元素:", e);
+        } else {
+            console.error("未找到头像元素");
         }
     };
 
     const clickPersonalCenter = async () => {
-        const items = Array.from(document.querySelectorAll("[role='menuitem'], div.cursor-pointer.p-4.hover\\:bg-gray-100, .menu-item, li.cursor-pointer"));
+        // 匹配 "个人资料" 文本（你提供的 HTML）
+        const items = Array.from(document.querySelectorAll("[role='menuitem'], a[href*='/zh/profile'], div.cursor-pointer, li.cursor-pointer"));
         const personalCenter = items.find(el =>
-            el.textContent.trim().includes("个人中心") ||
             el.textContent.trim().includes("个人资料") ||
-            el.textContent.trim().includes("Profile") ||
-            el.textContent.trim().includes("Center")
+            el.textContent.trim().includes("Profile")
         );
         if (personalCenter) {
-            console.log("找到并点击 '个人中心' 菜单项");
+            console.log("找到并点击 '个人资料' 菜单项");
             personalCenter.click();
         } else {
-            console.warn("未找到‘个人中心’文本，尝试默认第2个菜单项");
+            console.warn("未找到‘个人资料’菜单项，尝试默认第2个");
             if (items.length >= 2) items[1].click();
         }
         await sleep(1200);
     };
 
     const clickExpToReturn = async () => {
+        // 优先用 id="go_exp"（你提供的 HTML）
         let el = document.getElementById("go_exp");
-
-        if (!el) {
-            const candidates = document.querySelectorAll('div, span');
-            for (const candidate of candidates) {
-                if (candidate.textContent.includes("Exp") && candidate.querySelector('img[src*="exps-dark.svg"]')) {
-                    el = candidate;
-                    break;
-                }
-            }
-        }
-
         if (!el) {
             el = await waitForElement(
                 'div#go_exp, div.flex.items-center.cursor-pointer, span.text-base.mr-2.font-bold.text-transparent.whitespace-nowrap.bg-clip-text, [class*="bg-clip-text"]',
@@ -450,7 +445,6 @@
                 continue;
             }
 
-            // 先检查是否全部完成
             if (checkAllTasksCompleted()) {
                 console.log("所有任务已完成，脚本结束");
                 showCompletionPopup();
@@ -486,12 +480,12 @@
                 await navigateToRefresh();
             }
 
-            await sleep(5000 + Math.random() * 3000);  // 主循环间隔优化为5~8秒
+            await sleep(5000 + Math.random() * 3000);
         }
     };
 
     const main = async () => {
-        console.log("SOSOValue 自动化任务插件 v3.3 开始... (速度优化版)");
+        console.log("SOSOValue 自动化任务插件 v3.5 开始... (精准选择器 + 速度优化)");
         await sleep(1500);
         await clickAllTaskButtonsAtOnce();
         console.log("所有任务按钮已随机点击，等待页面更新...");
