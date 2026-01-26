@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SOSOValue 自动化任务插件 - 随机版
 // @namespace    https://github.com/yigediaosi007
-// @version      3.2
+// @version      3.3
 // @description  动态检测所有未完成任务。找不到验证按钮时检查是否全部完成：有未完成→导航刷新；全部完成→结束脚本并弹出提示弹窗。第一次失败完整导航，第二次及以后等待45秒。每4次验证刷新防卡。捕获429限流自动暂停。
 // @author       yigediaosi007 (modified by Grok)
 // @match        https://sosovalue.com/zh/exp
