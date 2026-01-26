@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SOSOValue 自动化任务插件 - 随机版
 // @namespace    https://github.com/yigediaosi007
-// @version      3.5
-// @description  动态检测所有未完成任务（点赞/观看/分享等），随机顺序处理。找不到验证按钮时检查是否全部完成：有未完成→导航刷新；全部完成→结束脚本并显示顶部弹窗。第一次失败完整导航，第二次及以后等待45秒。每4次验证刷新防卡。捕获429限流自动暂停。
+// @version      3.6
+// @description  动态检测所有任务。加强开头页面加载等待，确保任务按钮完全渲染。找不到验证按钮时检查是否全部完成：有未完成→导航刷新；全部完成→结束并显示顶部弹窗。第一次失败完整导航，第二次及以后等待45秒。每4次验证刷新防卡。捕获429限流自动暂停。
 // @author       yigediaosi007 (modified by Grok)
 // @match        https://sosovalue.com/zh/exp
 // @match        https://sosovalue.com/zh/center
@@ -93,7 +93,7 @@
     let failCount = 0;
     let taskContainer = null;
 
-    // ==================== 自定义顶部小弹窗 ====================
+    // ==================== 顶部小弹窗 ====================
     function showCompletionPopup() {
         const popup = document.createElement('div');
         popup.id = 'sosovalue-completion-popup';
@@ -132,7 +132,8 @@
     // ==================== 缓存任务容器 ====================
     async function getTaskContainer() {
         if (!taskContainer) {
-            taskContainer = await waitForElement("div.grid.mt-3", 20000);
+            taskContainer = await waitForElement("div.grid.mt-3", 30000);  // 加长等待到30s，确保网格加载
+            console.log("任务容器 div.grid.mt-3 已加载");
         }
         return taskContainer;
     }
@@ -142,13 +143,16 @@
         const container = await getTaskContainer();
         if (!container) return [];
 
+        // 额外等待 2 秒，确保按钮完全渲染
+        await sleep(2000);
+
         const buttons = Array.from(container.querySelectorAll("button"));
         const available = buttons.filter(btn => {
             if (btn.hasAttribute("disabled")) return false;
             const span = btn.querySelector("span.transition-opacity.font-medium");
             if (!span) return false;
             const text = span.textContent.trim();
-            // 精确匹配常见任务文本（根据你提供的 HTML）
+            // 精确匹配你提供的按钮文本
             return text === "点赞" || text === "观看" || text === "分享" || 
                    text === "引用" || text === "回复" || text === "验证";
         });
@@ -186,7 +190,6 @@
         console.log("所有任务按钮随机点击完成！");
     };
 
-    // ==================== 其余函数保持优化版 ====================
     function shuffle(array) {
         const newArray = [...array];
         for (let i = newArray.length - 1; i > 0; i--) {
@@ -197,19 +200,35 @@
     }
 
     const waitForPageLoad = () => new Promise(resolve => {
-        if (document.readyState === 'complete') return resolve();
-        window.addEventListener('load', resolve, { once: true });
+        if (document.readyState === 'complete') {
+            console.log("页面 readyState 已 complete");
+            resolve();
+            return;
+        }
+        window.addEventListener('load', () => {
+            console.log("页面 load 事件触发");
+            resolve();
+        }, { once: true });
+        // 额外兜底：如果 30 秒后还没 complete，也强制继续（防卡）
+        setTimeout(() => {
+            console.warn("页面加载超时 30s，强制继续（可能部分元素未加载）");
+            resolve();
+        }, 30000);
     });
 
-    const waitForElement = async (selector, timeout = 15000, interval = 500) => {
+    const waitForElement = async (selector, timeout = 30000, interval = 800) => {  // 加长超时到30s，间隔800ms
         let elapsed = 0;
         while (elapsed < timeout) {
             const el = document.querySelector(selector);
-            if (el) return el;
+            if (el) {
+                console.log(`元素 ${selector} 已找到`);
+                return el;
+            }
             await sleep(interval);
             elapsed += interval;
         }
-        throw new Error(`超时未找到: ${selector}`);
+        console.warn(`超时未找到元素: ${selector}`);
+        return null;  // 返回 null 而非 throw，避免崩溃
     };
 
     const checkAllTasksCompleted = () => {
@@ -385,7 +404,6 @@
     };
 
     const clickAvatarBox = async () => {
-        // 优先用 id="go_profile"（你提供的 HTML）
         let el = document.getElementById("go_profile");
         if (!el) {
             const selector = "button[aria-label='Open user menu'], div.MuiAvatar-root, .avatar, img.avatar, img.rounded-full, [aria-label*='avatar' i], [data-testid*='avatar'], div[role='button'] img";
@@ -400,7 +418,6 @@
     };
 
     const clickPersonalCenter = async () => {
-        // 匹配 "个人资料" 文本（你提供的 HTML）
         const items = Array.from(document.querySelectorAll("[role='menuitem'], a[href*='/zh/profile'], div.cursor-pointer, li.cursor-pointer"));
         const personalCenter = items.find(el =>
             el.textContent.trim().includes("个人资料") ||
@@ -417,7 +434,6 @@
     };
 
     const clickExpToReturn = async () => {
-        // 优先用 id="go_exp"（你提供的 HTML）
         let el = document.getElementById("go_exp");
         if (!el) {
             el = await waitForElement(
@@ -485,8 +501,14 @@
     };
 
     const main = async () => {
-        console.log("SOSOValue 自动化任务插件 v3.5 开始... (精准选择器 + 速度优化)");
-        await sleep(1500);
+        console.log("SOSOValue 自动化任务插件 v3.5 开始... (加强页面加载等待 + 精准选择器)");
+        // 加强开头等待：先等页面完全加载，再额外等任务网格出现
+        await waitForPageLoad();
+        console.log("页面 load 完成，开始额外等待任务网格...");
+        await waitForElement("div.grid.mt-3", 30000);  // 确保网格加载
+        console.log("任务网格已加载，继续执行");
+
+        await sleep(2000);  // 额外 2s 缓冲，确保所有按钮渲染
         await clickAllTaskButtonsAtOnce();
         console.log("所有任务按钮已随机点击，等待页面更新...");
         await sleep(3500);
@@ -497,8 +519,6 @@
 
     (async () => {
         try {
-            await waitForPageLoad();
-            await waitForElement("div.grid.mt-3", 18000);
             await main();
         } catch (e) {
             console.error("脚本执行出错:", e);
