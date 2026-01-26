@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SOSOValue 自动化任务插件 - 随机版
 // @namespace    https://github.com/yigediaosi007
-// @version      4.0
-// @description  动态检测所有任务。找不到验证按钮时检查是否全部完成：有未完成→导航刷新；全部完成→结束并顶部弹窗。第一次失败完整导航，第二次及以后等待45秒。每4次验证刷新防卡。捕获429限流自动暂停。优化返回任务界面：点击个人中心后直接点 EXP。
+// @version      4.1
+// @description  动态检测所有任务。找不到验证按钮时检查是否全部完成：有未完成→导航刷新；全部完成→结束并顶部弹窗。第一次失败完整导航，第二次及以后等待45秒。每4次验证刷新防卡。捕获429限流自动暂停。等待弹窗固定5秒。
 // @author       yigediaosi007 (modified by Grok)
 // @match        https://sosovalue.com/zh/exp
 // @match        https://sosovalue.com/zh/center
@@ -316,8 +316,8 @@
             }
         }
 
-        console.log("等待弹窗出现（约4-10秒）...");
-        await sleep(4000 + Math.random() * 6000);
+        console.log("等待弹窗出现（固定5秒）...");
+        await sleep(5000);  // ← 修改为固定5秒
 
         const success = await closeCongratsModal();
         if (success) {
@@ -351,63 +351,12 @@
 
     const navigateToRefresh = async () => {
         if (checkRateLimit()) return;
-
         await clickAvatarBox();
-        await sleep(1000);  // 头像后等待 1 秒
-
+        await sleep(1000);
         await clickPersonalCenter();
-        await sleep(1500);  // 个人中心后等待 1.5 秒（菜单展开时间）
-
-        // 重点加强：返回任务界面的点击（优先 id="go_exp"）
-        let el = document.getElementById("go_exp");
-
-        // 如果没找到，尝试查找含 Exp 文本且有图片的元素（根据你提供的 HTML）
-        if (!el) {
-            const candidates = document.querySelectorAll('div, span');
-            for (const candidate of candidates) {
-                if (candidate.textContent.includes("Exp") && candidate.querySelector('img[src*="exps-dark.svg"]')) {
-                    el = candidate;
-                    break;
-                }
-            }
-        }
-
-        // 最终 fallback
-        if (!el) {
-            el = await waitForElement(
-                'div#go_exp, div.flex.items-center.cursor-pointer, span.text-base.mr-2.font-bold.text-transparent.whitespace-nowrap.bg-clip-text, [class*="bg-clip-text"]',
-                10000,
-                500
-            );
-        }
-
-        // 重试机制：如果第一次没找到，再等 2 秒重试一次（最多 3 次）
-        let retry = 0;
-        while (!el && retry < 3) {
-            console.log(`未立即找到 EXP 返回元素，第 ${retry + 1} 次重试...`);
-            await sleep(2000);
-            el = document.getElementById("go_exp");
-            if (!el) {
-                const candidates = document.querySelectorAll('div, span');
-                for (const candidate of candidates) {
-                    if (candidate.textContent.includes("Exp") && candidate.querySelector('img[src*="exps-dark.svg"]')) {
-                        el = candidate;
-                        break;
-                    }
-                }
-            }
-            retry++;
-        }
-
-        if (el) {
-            console.log("找到 EXP 返回入口，正在点击返回任务界面");
-            el.click();
-        } else {
-            console.error("多次尝试后仍未找到 EXP 返回元素，请检查页面结构");
-        }
-
-        // 统一等待页面跳转完成
-        await sleep(4000 + Math.random() * 3000);  // 4~7 秒
+        await sleep(1500);
+        await clickExpToReturn();
+        await sleep(4000 + Math.random() * 4000);
     };
 
     const clickAvatarBox = async () => {
@@ -435,6 +384,35 @@
         } else {
             console.warn("未找到‘个人中心’文本，尝试默认第2个菜单项");
             if (items.length >= 2) items[1].click();
+        }
+    };
+
+    const clickExpToReturn = async () => {
+        let el = document.getElementById("go_exp");
+
+        if (!el) {
+            const candidates = document.querySelectorAll('div, span');
+            for (const candidate of candidates) {
+                if (candidate.textContent.includes("Exp") && candidate.querySelector('img[src*="exps-dark.svg"]')) {
+                    el = candidate;
+                    break;
+                }
+            }
+        }
+
+        if (!el) {
+            el = await waitForElement(
+                'div#go_exp, div.flex.items-center.cursor-pointer, span.text-base.mr-2.font-bold.text-transparent.whitespace-nowrap.bg-clip-text, [class*="bg-clip-text"]',
+                10000,
+                500
+            );
+        }
+
+        if (el) {
+            console.log("找到 EXP 入口，正在点击返回");
+            el.click();
+        } else {
+            console.error("未找到 EXP 跳转元素");
         }
     };
 
@@ -486,7 +464,7 @@
     };
 
     const main = async () => {
-        console.log("SOSOValue 自动化任务插件 v3.9 开始... (优化返回任务界面：点击个人中心后直接点 EXP)");
+        console.log("SOSOValue 自动化任务插件 v3.9 开始... (等待弹窗固定5秒 + 优化返回任务界面)");
         await sleep(1500);
         await clickAllTaskButtonsAtOnce();
         console.log("所有任务按钮已随机点击，等待页面更新...");
