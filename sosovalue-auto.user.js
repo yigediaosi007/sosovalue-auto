@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SOSOValue 自动化任务插件 - 随机版
 // @namespace    https://github.com/yigediaosi007
-// @version      3.4
-// @description  动态检测所有任务。找不到验证按钮时检查是否全部完成：有未完成→导航刷新；全部完成→结束脚本并在页面顶部显示弹窗。第一次失败完整导航，第二次及以后等待45秒。每4次验证刷新防卡。捕获429限流自动暂停。
+// @version      3.5
+// @description  动态检测所有任务。优化速度：缩短轮询间隔、缓存任务容器、减少无效等待、主循环间隔5~8s、按钮等待10s。找不到验证按钮时检查是否全部完成：有未完成→导航刷新；全部完成→结束脚本并显示顶部弹窗。第一次失败完整导航，第二次及以后等待45秒。每4次验证刷新防卡。捕获429限流自动暂停。
 // @author       yigediaosi007 (modified by Grok)
 // @match        https://sosovalue.com/zh/exp
 // @match        https://sosovalue.com/zh/center
@@ -92,9 +92,11 @@
     let completedCount = 0;
     let failCount = 0;
 
+    // 缓存任务容器（优化 DOM 查询）
+    let taskContainer = null;
+
     // ==================== 自定义顶部小弹窗（任务完成提示） ====================
     function showCompletionPopup() {
-        // 创建弹窗容器
         const popup = document.createElement('div');
         popup.id = 'sosovalue-completion-popup';
         popup.innerHTML = '🎉 SOSOValue 所有任务已全部完成！';
@@ -115,7 +117,6 @@
         popup.style.userSelect = 'none';
         popup.style.transition = 'all 0.3s ease';
 
-        // 鼠标悬停放大
         popup.onmouseover = () => {
             popup.style.transform = 'translateX(-50%) scale(1.05)';
             popup.style.boxShadow = '0 10px 30px rgba(0,0,0,0.5)';
@@ -125,18 +126,26 @@
             popup.style.boxShadow = '0 6px 20px rgba(0,0,0,0.4)';
         };
 
-        // 点击关闭弹窗
         popup.onclick = () => popup.remove();
 
-        // 添加到页面（顶部中央）
         document.body.appendChild(popup);
     }
 
     // ==================== 动态任务检测 ====================
     const supportedTaskKeywords = ["点赞", "观看", "分享", "引用", "回复", "点zan", "guan kan", "fen xiang"];
 
+    async function getTaskContainer() {
+        if (!taskContainer) {
+            taskContainer = await waitForElement("div.grid.mt-3", 20000);
+        }
+        return taskContainer;
+    }
+
     async function getAllAvailableTasks() {
-        const buttons = Array.from(document.querySelectorAll("div.grid.mt-3 > button"));
+        const container = await getTaskContainer();
+        if (!container) return [];
+
+        const buttons = Array.from(container.querySelectorAll("button"));
         const available = buttons.filter(btn => {
             if (btn.hasAttribute("disabled")) return false;
             const text = btn.querySelector("span.transition-opacity.font-medium")?.textContent || "";
@@ -214,10 +223,14 @@
 
     const findVerifyButtons = async () => {
         let elapsed = 0;
-        const maxWait = 15000, interval = 1000;
+        const maxWait = 12000;  // 缩短到12秒
+        const interval = 1200;  // 每1.2秒查一次
+        const container = await getTaskContainer();
+        if (!container) return [];
+
         while (elapsed < maxWait) {
             if (checkRateLimit()) return [];
-            const buttons = Array.from(document.querySelectorAll("div.grid.mt-3 > button"));
+            const buttons = Array.from(container.querySelectorAll("button"));
             const verifyBtns = buttons.filter(btn =>
                 btn.querySelector("span.transition-opacity.font-medium")?.textContent.includes("验证") &&
                 !btn.hasAttribute("disabled")
@@ -235,10 +248,12 @@
 
     const waitForButtonEnabled = async (btn, idx) => {
         let elapsed = 0;
-        while (elapsed < 12000) {
+        const maxWait = 10000;  // 缩短到10秒
+        const interval = 1000;  // 每1秒查一次
+        while (elapsed < maxWait) {
             if (!btn.disabled && btn.getAttribute("disabled") === null) return true;
-            await sleep(1000);
-            elapsed += 1000;
+            await sleep(interval);
+            elapsed += interval;
         }
         console.log(`按钮 ${idx+1} 等待超时仍不可点`);
         return false;
@@ -323,8 +338,8 @@
             }
         }
 
-        console.log("等待弹窗出现（约4-10秒）...");
-        await sleep(4000 + Math.random() * 6000);
+        console.log("等待弹窗出现（约3-7秒）...");
+        await sleep(3000 + Math.random() * 4000);
 
         const success = await closeCongratsModal();
         if (success) {
@@ -438,7 +453,7 @@
             // 先检查是否全部完成
             if (checkAllTasksCompleted()) {
                 console.log("所有任务已完成，脚本结束");
-                showCompletionPopup();  // 显示网页顶部弹窗
+                showCompletionPopup();
                 break;
             }
 
@@ -447,7 +462,7 @@
                 console.log("未找到验证按钮，检查整体任务完成情况...");
                 if (checkAllTasksCompleted()) {
                     console.log("所有任务已完成，无需继续，脚本结束");
-                    showCompletionPopup();  // 显示网页顶部弹窗
+                    showCompletionPopup();
                     break;
                 } else {
                     console.log("还有未完成任务 → 执行一次完整导航刷新状态");
@@ -471,12 +486,12 @@
                 await navigateToRefresh();
             }
 
-            await sleep(8000 + Math.random() * 4000);
+            await sleep(5000 + Math.random() * 3000);  // 主循环间隔优化为5~8秒
         }
     };
 
     const main = async () => {
-        console.log("SOSOValue 自动化任务插件 v3.3 开始... (动态任务 + 完成时网页弹窗)");
+        console.log("SOSOValue 自动化任务插件 v3.3 开始... (速度优化版)");
         await sleep(1500);
         await clickAllTaskButtonsAtOnce();
         console.log("所有任务按钮已随机点击，等待页面更新...");
