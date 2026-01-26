@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SOSOValue 自动化任务插件 - 随机版
 // @namespace    https://github.com/yigediaosi007
-// @version      3.6
-// @description  动态检测并循环点击所有可见任务按钮（点赞/观看/分享等），点击后动态等待验证按钮出现。找不到验证按钮时检查是否全部完成：有未完成→导航刷新；全部完成→结束并显示顶部弹窗。第一次失败完整导航，第二次及以后等待45秒。每4次验证刷新防卡。捕获429限流自动暂停。
+// @version      3.8
+// @description  动态检测所有任务。找不到验证按钮时检查是否全部完成：有未完成→导航刷新；全部完成→结束并顶部弹窗。第一次失败完整导航，第二次及以后等待45秒。每4次验证刷新防卡。捕获429限流自动暂停。优化等待时间，去除重复sleep。
 // @author       yigediaosi007 (modified by Grok)
 // @match        https://sosovalue.com/zh/exp
 // @match        https://sosovalue.com/zh/center
@@ -15,24 +15,6 @@
     'use strict';
 
     const sleep = ms => new Promise(r => setTimeout(r, ms));
-
-    // ==================== 页面加载等待（必须有！） ====================
-    const waitForPageLoad = () => new Promise(resolve => {
-        if (document.readyState === 'complete') {
-            console.log("页面 readyState 已 complete");
-            resolve();
-            return;
-        }
-        window.addEventListener('load', () => {
-            console.log("页面 load 事件触发");
-            resolve();
-        }, { once: true });
-        // 兜底超时 40 秒强制继续
-        setTimeout(() => {
-            console.warn("页面加载超时 40s，强制继续（可能部分元素未加载）");
-            resolve();
-        }, 40000);
-    });
 
     // ==================== 429 / 限流检测 ====================
     let rateLimitCount = 0;
@@ -109,9 +91,8 @@
     // ==================== 全局变量 ====================
     let completedCount = 0;
     let failCount = 0;
-    let taskContainer = null;
 
-    // ==================== 顶部小弹窗 ====================
+    // ==================== 顶部完成弹窗（不自动消失） ====================
     function showCompletionPopup() {
         const popup = document.createElement('div');
         popup.id = 'sosovalue-completion-popup';
@@ -122,7 +103,7 @@
         popup.style.transform = 'translateX(-50%)';
         popup.style.background = 'linear-gradient(135deg, #10b981, #059669)';
         popup.style.color = 'white';
-        popup.style.padding = '16px 32px';
+        popup.style.padding = '14px 28px';
         popup.style.borderRadius = '0 0 12px 12px';
         popup.style.boxShadow = '0 6px 20px rgba(0,0,0,0.4)';
         popup.style.zIndex = '999999';
@@ -131,15 +112,12 @@
         popup.style.whiteSpace = 'nowrap';
         popup.style.cursor = 'pointer';
         popup.style.userSelect = 'none';
-        popup.style.transition = 'all 0.3s ease';
 
         popup.onmouseover = () => {
             popup.style.transform = 'translateX(-50%) scale(1.05)';
-            popup.style.boxShadow = '0 10px 30px rgba(0,0,0,0.5)';
         };
         popup.onmouseout = () => {
             popup.style.transform = 'translateX(-50%) scale(1)';
-            popup.style.boxShadow = '0 6px 20px rgba(0,0,0,0.4)';
         };
 
         popup.onclick = () => popup.remove();
@@ -147,45 +125,15 @@
         document.body.appendChild(popup);
     }
 
-    // ==================== 缓存任务容器 ====================
-    async function getTaskContainer() {
-        if (!taskContainer) {
-            taskContainer = await waitForElement("div.grid.mt-3", 40000);
-            console.log("任务网格 div.grid.mt-3 已加载");
-        }
-        return taskContainer;
-    }
+    // ==================== 动态任务检测 ====================
+    const supportedTaskKeywords = ["点赞", "观看", "分享", "引用", "回复", "点zan", "guan kan", "fen xiang"];
 
-    // ==================== 动态获取所有可做任务按钮 ====================
     async function getAllAvailableTasks() {
-        const container = await getTaskContainer();
-        if (!container) return [];
-
-        // 动态等待：每秒检查一次，最多等15秒，直到至少有2个任务按钮或超时
-        let attempts = 0;
-        while (attempts < 15) {
-            const buttons = Array.from(container.querySelectorAll("button"));
-            const count = buttons.filter(btn => {
-                const span = btn.querySelector("span.transition-opacity.font-medium");
-                return span && ["点赞", "观看", "分享", "验证", "引用", "回复"].includes(span.textContent.trim());
-            }).length;
-
-            if (count >= 2) {
-                console.log(`任务按钮加载完成（检测到 ${count} 个）`);
-                break;
-            }
-            console.log(`任务按钮加载中... 当前检测到 ${count} 个，等待第 ${attempts+1}/15 秒`);
-            await sleep(1000);
-            attempts++;
-        }
-
-        const buttons = Array.from(container.querySelectorAll("button"));
+        const buttons = Array.from(document.querySelectorAll("div.grid.mt-3 > button"));
         const available = buttons.filter(btn => {
             if (btn.hasAttribute("disabled")) return false;
-            const span = btn.querySelector("span.transition-opacity.font-medium");
-            if (!span) return false;
-            const text = span.textContent.trim();
-            return ["点赞", "观看", "分享", "验证", "引用", "回复"].includes(text);
+            const text = btn.querySelector("span.transition-opacity.font-medium")?.textContent || "";
+            return supportedTaskKeywords.some(kw => text.includes(kw));
         });
 
         if (available.length === 0) {
@@ -193,45 +141,32 @@
             return [];
         }
 
-        console.log(`最终检测到 ${available.length} 个可做任务`);
+        console.log(`检测到 ${available.length} 个可做任务（动态检测）`);
         return available;
     }
 
     const clickAllTaskButtonsAtOnce = async () => {
         if (checkRateLimit()) return;
 
-        console.log("开始循环点击所有可见任务按钮...");
-        let availableButtons = await getAllAvailableTasks();
+        console.log("开始随机点击所有可做任务按钮...");
+        const availableButtons = await getAllAvailableTasks();
 
         if (availableButtons.length === 0) return;
 
-        let previousCount = 0;
-        while (availableButtons.length > 0) {
-            const shuffledButtons = shuffle(availableButtons);
+        const shuffledButtons = shuffle(availableButtons);
 
-            for (let i = 0; i < shuffledButtons.length; i++) {
-                if (checkRateLimit()) break;
-                const btn = shuffledButtons[i];
-                const text = btn.querySelector("span.transition-opacity.font-medium")?.textContent.trim() || "未知";
-                const enabled = await waitForButtonEnabled(btn, i);
-                if (enabled) {
-                    btn.click();
-                    console.log(`已点击任务 ${i+1}/${shuffledButtons.length}: ${text}`);
-                    await sleep(3000 + Math.random() * 4000);
-                }
+        for (let i = 0; i < shuffledButtons.length; i++) {
+            if (checkRateLimit()) break;
+            const btn = shuffledButtons[i];
+            const text = btn.querySelector("span.transition-opacity.font-medium")?.textContent || "未知";
+            const enabled = await waitForButtonEnabled(btn, i);
+            if (enabled) {
+                btn.click();
+                console.log(`已点击任务 ${i+1}/${shuffledButtons.length}: ${text}`);
+                await sleep(3000 + Math.random() * 4000);
             }
-
-            // 重新扫描，看是否有新任务/验证按钮出现
-            await sleep(3000);  // 给页面更多反应时间
-            availableButtons = await getAllAvailableTasks();
-            if (availableButtons.length === previousCount) {
-                console.log("没有新任务按钮出现，任务点击阶段结束");
-                break;
-            }
-            previousCount = availableButtons.length;
-            console.log(`检测到新任务按钮，继续点击... 当前 ${availableButtons.length} 个`);
         }
-        console.log("所有可见任务按钮处理完成！");
+        console.log("所有任务按钮随机点击完成！");
     };
 
     function shuffle(array) {
@@ -244,40 +179,25 @@
     }
 
     const waitForPageLoad = () => new Promise(resolve => {
-        if (document.readyState === 'complete') {
-            console.log("页面 readyState 已 complete");
-            resolve();
-            return;
-        }
-        window.addEventListener('load', () => {
-            console.log("页面 load 事件触发");
-            resolve();
-        }, { once: true });
-        setTimeout(() => {
-            console.warn("页面加载超时 40s，强制继续");
-            resolve();
-        }, 40000);
+        if (document.readyState === 'complete') return resolve();
+        window.addEventListener('load', resolve, { once: true });
     });
 
-    const waitForElement = async (selector, timeout = 30000, interval = 800) => {
+    const waitForElement = async (selector, timeout = 15000, interval = 500) => {
         let elapsed = 0;
         while (elapsed < timeout) {
             const el = document.querySelector(selector);
-            if (el) {
-                console.log(`元素 ${selector} 已找到`);
-                return el;
-            }
+            if (el) return el;
             await sleep(interval);
             elapsed += interval;
         }
-        console.warn(`超时未找到元素: ${selector}`);
-        return null;
+        throw new Error(`超时未找到: ${selector}`);
     };
 
     const checkAllTasksCompleted = () => {
         const buttons = Array.from(document.querySelectorAll("div.grid.mt-3 > button"));
         const completed = buttons.filter(btn =>
-            btn.querySelector("span.transition-opacity.font-medium")?.textContent.trim() === "完成" &&
+            btn.querySelector("span.transition-opacity.font-medium")?.textContent.includes("完成") &&
             btn.hasAttribute("disabled")
         );
         const totalButtons = buttons.length;
@@ -287,18 +207,14 @@
 
     const findVerifyButtons = async () => {
         let elapsed = 0;
-        const maxWait = 12000;
-        const interval = 1200;
-        const container = await getTaskContainer();
-        if (!container) return [];
-
+        const maxWait = 15000, interval = 1000;
         while (elapsed < maxWait) {
             if (checkRateLimit()) return [];
-            const buttons = Array.from(container.querySelectorAll("button"));
-            const verifyBtns = buttons.filter(btn => {
-                const span = btn.querySelector("span.transition-opacity.font-medium");
-                return span && span.textContent.trim() === "验证" && !btn.hasAttribute("disabled");
-            });
+            const buttons = Array.from(document.querySelectorAll("div.grid.mt-3 > button"));
+            const verifyBtns = buttons.filter(btn =>
+                btn.querySelector("span.transition-opacity.font-medium")?.textContent.includes("验证") &&
+                !btn.hasAttribute("disabled")
+            );
             if (verifyBtns.length > 0) {
                 console.log(`找到 ${verifyBtns.length} 个验证按钮`);
                 return verifyBtns;
@@ -312,12 +228,10 @@
 
     const waitForButtonEnabled = async (btn, idx) => {
         let elapsed = 0;
-        const maxWait = 10000;
-        const interval = 1000;
-        while (elapsed < maxWait) {
+        while (elapsed < 12000) {
             if (!btn.disabled && btn.getAttribute("disabled") === null) return true;
-            await sleep(interval);
-            elapsed += interval;
+            await sleep(1000);
+            elapsed += 1000;
         }
         console.log(`按钮 ${idx+1} 等待超时仍不可点`);
         return false;
@@ -402,8 +316,8 @@
             }
         }
 
-        console.log("等待弹窗出现（约3-7秒）...");
-        await sleep(3000 + Math.random() * 4000);
+        console.log("等待弹窗出现（约4-10秒）...");
+        await sleep(4000 + Math.random() * 6000);
 
         const success = await closeCongratsModal();
         if (success) {
@@ -423,7 +337,7 @@
             if (failCount === 1) {
                 console.log("第一次失败 → 关闭弹窗后完整导航刷新状态...");
                 await navigateToRefresh();
-                await sleep(3000);
+                // 不再额外 sleep(3000)，导航函数已包含等待
             } else if (failCount >= 2) {
                 console.log("连续失败2次以上 → 暂停45秒等待前端/服务器恢复...");
                 await sleep(45000);
@@ -439,45 +353,53 @@
     const navigateToRefresh = async () => {
         if (checkRateLimit()) return;
         await clickAvatarBox();
-        await sleep(900);
         await clickPersonalCenter();
-        await sleep(1800);
         await clickExpToReturn();
-        await sleep(2200);
+        // 合并等待：统一 4~8 秒，取代原来的多个小 sleep
+        await sleep(4000 + Math.random() * 4000);
     };
 
     const clickAvatarBox = async () => {
-        let el = document.getElementById("go_profile");
-        if (!el) {
-            const selector = "button[aria-label='Open user menu'], div.MuiAvatar-root, .avatar, img.avatar, img.rounded-full, [aria-label*='avatar' i], [data-testid*='avatar'], div[role='button'] img";
-            el = await waitForElement(selector, 12000);
-        }
-        if (el) {
+        const selector = "div.MuiAvatar-root, .avatar, img.avatar, img.rounded-full, [aria-label*='avatar' i], [data-testid*='avatar'], div[role='button'] img, .profile-avatar";
+        try {
+            const el = await waitForElement(selector, 12000);
             console.log("找到头像元素，正在点击");
             el.click();
-        } else {
-            console.error("未找到头像元素");
+        } catch (e) {
+            console.error("未找到头像元素:", e);
         }
     };
 
     const clickPersonalCenter = async () => {
-        const items = Array.from(document.querySelectorAll("[role='menuitem'], a[href*='/zh/profile'], div.cursor-pointer, li.cursor-pointer"));
+        const items = Array.from(document.querySelectorAll("[role='menuitem'], div.cursor-pointer.p-4.hover\\:bg-gray-100, .menu-item, li.cursor-pointer"));
         const personalCenter = items.find(el =>
+            el.textContent.trim().includes("个人中心") ||
             el.textContent.trim().includes("个人资料") ||
-            el.textContent.trim().includes("Profile")
+            el.textContent.trim().includes("Profile") ||
+            el.textContent.trim().includes("Center")
         );
         if (personalCenter) {
-            console.log("找到并点击 '个人资料' 菜单项");
+            console.log("找到并点击 '个人中心' 菜单项");
             personalCenter.click();
         } else {
-            console.warn("未找到‘个人资料’菜单项，尝试默认第2个");
+            console.warn("未找到‘个人中心’文本，尝试默认第2个菜单项");
             if (items.length >= 2) items[1].click();
         }
-        await sleep(1200);
     };
 
     const clickExpToReturn = async () => {
         let el = document.getElementById("go_exp");
+
+        if (!el) {
+            const candidates = document.querySelectorAll('div, span');
+            for (const candidate of candidates) {
+                if (candidate.textContent.includes("Exp") && candidate.querySelector('img[src*="exps-dark.svg"]')) {
+                    el = candidate;
+                    break;
+                }
+            }
+        }
+
         if (!el) {
             el = await waitForElement(
                 'div#go_exp, div.flex.items-center.cursor-pointer, span.text-base.mr-2.font-bold.text-transparent.whitespace-nowrap.bg-clip-text, [class*="bg-clip-text"]',
@@ -489,7 +411,6 @@
         if (el) {
             console.log("找到 EXP 入口，正在点击返回");
             el.click();
-            await sleep(1500);
         } else {
             console.error("未找到 EXP 跳转元素");
         }
@@ -520,7 +441,6 @@
                 } else {
                     console.log("还有未完成任务 → 执行一次完整导航刷新状态");
                     await navigateToRefresh();
-                    await sleep(3000);
                     retry++;
                     if (retry >= 6) {
                         console.log("多次刷新仍未找到验证按钮且任务未全完成，停止脚本");
@@ -539,24 +459,17 @@
                 await navigateToRefresh();
             }
 
-            await sleep(5000 + Math.random() * 3000);
+            // 主循环间隔缩短为 4~8 秒，避免累计等待过长
+            await sleep(4000 + Math.random() * 4000);
         }
     };
 
     const main = async () => {
-        console.log("SOSOValue 自动化任务插件 v3.6 开始... (修复 waitForPageLoad 未定义 + 动态加载等待)");
-        await waitForPageLoad();  // 这里调用，确保页面加载完成
-        console.log("页面加载完成，开始等待任务网格...");
-        const grid = await waitForElement("div.grid.mt-3", 40000);
-        if (grid) {
-            console.log("任务网格已加载，额外等待 5 秒确保按钮渲染");
-            await sleep(5000);
-        } else {
-            console.warn("任务网格超时未找到，强制继续");
-        }
-
+        console.log("SOSOValue 自动化任务插件 v3.8 开始... (优化等待时间 + 顶部完成弹窗)");
+        await sleep(1500);
         await clickAllTaskButtonsAtOnce();
-        console.log("任务点击阶段完成，进入验证阶段...");
+        console.log("所有任务按钮已随机点击，等待页面更新...");
+        await sleep(3500);
         await navigateToRefresh();
         await checkAndProcessVerifyButtons();
         console.log("脚本执行完毕！🎉");
@@ -564,6 +477,8 @@
 
     (async () => {
         try {
+            await waitForPageLoad();
+            await waitForElement("div.grid.mt-3", 18000);
             await main();
         } catch (e) {
             console.error("脚本执行出错:", e);
