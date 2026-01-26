@@ -398,7 +398,7 @@
             // 先检查是否全部完成
             if (checkAllTasksCompleted()) {
                 console.log("所有任务已完成，脚本结束");
-                alert("🎉 SOSOValue 所有任务已全部完成！\n你可以继续其他操作了～");
+                alert("🎉 SOSOValue 所有任务已全部完成！");
                 break;
             }
 
@@ -407,7 +407,7 @@
                 console.log("未找到验证按钮，检查整体任务完成情况...");
                 if (checkAllTasksCompleted()) {
                     console.log("所有任务已完成，无需继续，脚本结束");
-                    alert("🎉 SOSOValue 所有任务已全部完成！\n你可以继续其他操作了～");
+                    alert("🎉 SOSOValue 所有任务已全部完成！");
                     break;
                 } else {
                     console.log("还有未完成任务 → 执行一次完整导航刷新状态");
