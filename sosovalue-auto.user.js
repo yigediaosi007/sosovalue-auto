@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SOSOValue 自动化任务插件 - 随机版
 // @namespace    https://github.com/yigediaosi007
-// @version      3.8
-// @description  动态检测所有任务。找不到验证按钮时检查是否全部完成：有未完成→导航刷新；全部完成→结束并顶部弹窗。第一次失败完整导航，第二次及以后等待45秒。每4次验证刷新防卡。捕获429限流自动暂停。优化等待时间，去除重复sleep。
+// @version      3.9
+// @description  启动时先检查任务是否全部完成：已完成→立即结束脚本；未完成→正常执行。动态检测任务。找不到验证按钮时检查是否全部完成：有未完成→导航刷新；全部完成→结束并顶部弹窗。第一次失败完整导航，第二次及以后等待45秒。每4次验证刷新防卡。捕获429限流自动暂停。
 // @author       yigediaosi007 (modified by Grok)
 // @match        https://sosovalue.com/zh/exp
 // @match        https://sosovalue.com/zh/center
@@ -92,7 +92,7 @@
     let completedCount = 0;
     let failCount = 0;
 
-    // ==================== 顶部完成弹窗（不自动消失） ====================
+    // ==================== 顶部完成弹窗 ====================
     function showCompletionPopup() {
         const popup = document.createElement('div');
         popup.id = 'sosovalue-completion-popup';
@@ -337,7 +337,6 @@
             if (failCount === 1) {
                 console.log("第一次失败 → 关闭弹窗后完整导航刷新状态...");
                 await navigateToRefresh();
-                // 不再额外 sleep(3000)，导航函数已包含等待
             } else if (failCount >= 2) {
                 console.log("连续失败2次以上 → 暂停45秒等待前端/服务器恢复...");
                 await sleep(45000);
@@ -355,8 +354,7 @@
         await clickAvatarBox();
         await clickPersonalCenter();
         await clickExpToReturn();
-        // 合并等待：统一 4~8 秒，取代原来的多个小 sleep
-        await sleep(4000 + Math.random() * 4000);
+        await sleep(4000 + Math.random() * 4000);  // 统一等待
     };
 
     const clickAvatarBox = async () => {
@@ -459,13 +457,24 @@
                 await navigateToRefresh();
             }
 
-            // 主循环间隔缩短为 4~8 秒，避免累计等待过长
             await sleep(4000 + Math.random() * 4000);
         }
     };
 
     const main = async () => {
-        console.log("SOSOValue 自动化任务插件 v3.8 开始... (优化等待时间 + 顶部完成弹窗)");
+        console.log("SOSOValue 自动化任务插件 v3.3 开始...");
+
+        await waitForPageLoad();
+        await waitForElement("div.grid.mt-3", 18000);
+
+        // 启动时先检查一次任务状态
+        if (checkAllTasksCompleted()) {
+            console.log("页面打开时检测到所有任务已完成，无需执行任何操作，脚本直接结束");
+            showCompletionPopup();  // 显示完成弹窗
+            return;  // 直接结束脚本
+        }
+
+        console.log("检测到有未完成任务，开始执行自动化流程...");
         await sleep(1500);
         await clickAllTaskButtonsAtOnce();
         console.log("所有任务按钮已随机点击，等待页面更新...");
@@ -477,8 +486,6 @@
 
     (async () => {
         try {
-            await waitForPageLoad();
-            await waitForElement("div.grid.mt-3", 18000);
             await main();
         } catch (e) {
             console.error("脚本执行出错:", e);
