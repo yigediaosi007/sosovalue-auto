@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SOSOValue 自动化任务插件 - 随机版
 // @namespace    https://github.com/yigediaosi007
-// @version      3.3
-// @description  动态检测所有未完成任务。找不到验证按钮时检查是否全部完成：有未完成→导航刷新；全部完成→结束脚本并弹出提示弹窗。第一次失败完整导航，第二次及以后等待45秒。每4次验证刷新防卡。捕获429限流自动暂停。
+// @version      3.4
+// @description  动态检测所有任务。找不到验证按钮时检查是否全部完成：有未完成→导航刷新；全部完成→结束脚本并在页面顶部显示弹窗。第一次失败完整导航，第二次及以后等待45秒。每4次验证刷新防卡。捕获429限流自动暂停。
 // @author       yigediaosi007 (modified by Grok)
 // @match        https://sosovalue.com/zh/exp
 // @match        https://sosovalue.com/zh/center
@@ -91,6 +91,46 @@
     // ==================== 全局变量 ====================
     let completedCount = 0;
     let failCount = 0;
+
+    // ==================== 自定义顶部小弹窗（任务完成提示） ====================
+    function showCompletionPopup() {
+        // 创建弹窗容器
+        const popup = document.createElement('div');
+        popup.id = 'sosovalue-completion-popup';
+        popup.innerHTML = '🎉 SOSOValue 所有任务已全部完成！';
+        popup.style.position = 'fixed';
+        popup.style.top = '0';
+        popup.style.left = '50%';
+        popup.style.transform = 'translateX(-50%)';
+        popup.style.background = 'linear-gradient(135deg, #10b981, #059669)';
+        popup.style.color = 'white';
+        popup.style.padding = '16px 32px';
+        popup.style.borderRadius = '0 0 12px 12px';
+        popup.style.boxShadow = '0 6px 20px rgba(0,0,0,0.4)';
+        popup.style.zIndex = '999999';
+        popup.style.fontSize = '20px';
+        popup.style.fontWeight = 'bold';
+        popup.style.whiteSpace = 'nowrap';
+        popup.style.cursor = 'pointer';
+        popup.style.userSelect = 'none';
+        popup.style.transition = 'all 0.3s ease';
+
+        // 鼠标悬停放大
+        popup.onmouseover = () => {
+            popup.style.transform = 'translateX(-50%) scale(1.05)';
+            popup.style.boxShadow = '0 10px 30px rgba(0,0,0,0.5)';
+        };
+        popup.onmouseout = () => {
+            popup.style.transform = 'translateX(-50%) scale(1)';
+            popup.style.boxShadow = '0 6px 20px rgba(0,0,0,0.4)';
+        };
+
+        // 点击关闭弹窗
+        popup.onclick = () => popup.remove();
+
+        // 添加到页面（顶部中央）
+        document.body.appendChild(popup);
+    }
 
     // ==================== 动态任务检测 ====================
     const supportedTaskKeywords = ["点赞", "观看", "分享", "引用", "回复", "点zan", "guan kan", "fen xiang"];
@@ -398,7 +438,7 @@
             // 先检查是否全部完成
             if (checkAllTasksCompleted()) {
                 console.log("所有任务已完成，脚本结束");
-                alert("🎉 SOSOValue 所有任务已全部完成！");
+                showCompletionPopup();  // 显示网页顶部弹窗
                 break;
             }
 
@@ -407,7 +447,7 @@
                 console.log("未找到验证按钮，检查整体任务完成情况...");
                 if (checkAllTasksCompleted()) {
                     console.log("所有任务已完成，无需继续，脚本结束");
-                    alert("🎉 SOSOValue 所有任务已全部完成！");
+                    showCompletionPopup();  // 显示网页顶部弹窗
                     break;
                 } else {
                     console.log("还有未完成任务 → 执行一次完整导航刷新状态");
@@ -436,7 +476,7 @@
     };
 
     const main = async () => {
-        console.log("SOSOValue 自动化任务插件 v3.1 开始... (动态任务 + 找不到验证按钮时智能检查完成度)");
+        console.log("SOSOValue 自动化任务插件 v3.3 开始... (动态任务 + 完成时网页弹窗)");
         await sleep(1500);
         await clickAllTaskButtonsAtOnce();
         console.log("所有任务按钮已随机点击，等待页面更新...");
