@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SOSOValue 自动化任务插件 - 随机版
 // @namespace    https://github.com/yigediaosi007
-// @version      4.1
-// @description  动态检测所有任务。找不到验证按钮时检查是否全部完成：有未完成→导航刷新；全部完成→结束并顶部弹窗。第一次失败完整导航，第二次及以后等待45秒。每4次验证刷新防卡。捕获429限流自动暂停。等待弹窗固定5秒。
+// @version      4.2
+// @description  启动时先检测是否有可执行任务：无任务→立即弹窗结束；有任务→正常执行。动态检测任务。找不到验证按钮时检查是否全部完成：有未完成→导航刷新；全部完成→结束并顶部弹窗。第一次失败完整导航，第二次及以后等待45秒。每4次验证刷新防卡。捕获429限流自动暂停。等待弹窗固定5秒。
 // @author       yigediaosi007 (modified by Grok)
 // @match        https://sosovalue.com/zh/exp
 // @match        https://sosovalue.com/zh/center
@@ -317,7 +317,7 @@
         }
 
         console.log("等待弹窗出现（固定5秒）...");
-        await sleep(5000);  // ← 修改为固定5秒
+        await sleep(5000);
 
         const success = await closeCongratsModal();
         if (success) {
@@ -464,7 +464,21 @@
     };
 
     const main = async () => {
-        console.log("SOSOValue 自动化任务插件 v3.9 开始... (等待弹窗固定5秒 + 优化返回任务界面)");
+        console.log("SOSOValue 自动化任务插件 v4.2 开始...");
+
+        await waitForPageLoad();
+        await waitForElement("div.grid.mt-3", 18000);
+
+        // 启动时先检测是否有可执行任务
+        const availableTasks = await getAllAvailableTasks();
+        if (availableTasks.length === 0) {
+            // 没有任何可执行任务 → 直接弹窗结束
+            console.log("页面打开时检测到无任何可执行任务，脚本直接结束");
+            showCompletionPopup();
+            return;  // 立即结束脚本
+        }
+
+        console.log("检测到有未完成任务，开始执行自动化流程...");
         await sleep(1500);
         await clickAllTaskButtonsAtOnce();
         console.log("所有任务按钮已随机点击，等待页面更新...");
@@ -476,8 +490,6 @@
 
     (async () => {
         try {
-            await waitForPageLoad();
-            await waitForElement("div.grid.mt-3", 18000);
             await main();
         } catch (e) {
             console.error("脚本执行出错:", e);
